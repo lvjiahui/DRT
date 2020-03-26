@@ -13,12 +13,15 @@ xv,zv=torch.meshgrid(x,z)
 yv = torch.ones_like(xv)
 
 ray_dir = torch.stack((xv.reshape(-1), yv.reshape(-1), zv.reshape(-1)), dim=1)
+ray_dir = ray_dir / ray_dir.norm(dim=1).reshape(-1,1)
 origin = torch.zeros_like(ray_dir) + torch.tensor([0,-0.5,0])
 
 
-def render_norm(vertices, mesh):
-    ind_tri, ind_ray = mesh.ray.intersects_id(origin, ray_dir,False, 1, False)
-    ind_vert = mesh.faces[ind_tri]
+def render_norm(vertices, mesh:trimesh.Trimesh):
+    # ind_tri, ind_ray = mesh.ray.intersects_id(origin, ray_dir,False, 1, False)
+    ind_tri = mesh.ray.intersects_first(origin, ray_dir)
+    hit = (ind_tri != -1)
+    ind_vert = mesh.faces[ind_tri[hit]]
 
     # <<Fast, Minimum Storage Ray/Triangle Intersection>> 
     # https://cadxfem.org/inf/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
@@ -35,18 +38,18 @@ def render_norm(vertices, mesh):
     # Find vectors for two edges sharing v[0]
     edge1 = v1-v0
     edge2 = v2-v0
-    pvec = torch.cross(ray_dir[ind_ray], edge2)
+    pvec = torch.cross(ray_dir[hit], edge2)
 
     # If determinant is near zero, ray lies in plane of triangle
     det = dot(edge1, pvec)
     inv_det = 1/det
     # Calculate distance from v[0] to ray origin
-    tvec = origin[ind_ray] - v0
+    tvec = origin[hit] - v0
     # Calculate U parameter
     u = dot(tvec, pvec) * inv_det
     qvec = torch.cross(tvec, edge1)
     # Calculate V parameter
-    v = dot(ray_dir[ind_ray], qvec) * inv_det
+    v = dot(ray_dir[hit], qvec) * inv_det
     # Calculate T
     t = dot(edge2, qvec) * inv_det
     # print( v.max(), v.min())
@@ -59,14 +62,16 @@ def render_norm(vertices, mesh):
     n = n / n.norm(dim=1).reshape(-1,1)
 
     img = torch.zeros(ray_dir.shape)
-    img[ind_ray] = n
+    img[hit] = n
     img = img.reshape(256,256,3)
 
     return img
 
 def render_facenorm(vertices, mesh):
-    ind_tri, ind_ray = mesh.ray.intersects_id(origin, ray_dir,False, 1, False)
-    ind_vert = mesh.faces[ind_tri]
+    # ind_tri, ind_ray = mesh.ray.intersects_id(origin, ray_dir,False, 1, False)
+    ind_tri = mesh.ray.intersects_first(origin, ray_dir)
+    hit = ind_tri != -1
+    ind_vert = mesh.faces[ind_tri[hit]]
 
 
     def dot(v1, v2):
@@ -83,12 +88,12 @@ def render_facenorm(vertices, mesh):
     n = n / n.norm(dim=1).reshape(-1,1)
 
     img = torch.zeros(ray_dir.shape)
-    img[ind_ray] = n
+    img[hit] = n
     img = img.reshape(256,256,3)
 
     return img
 
-bunny = trimesh.load("../bunny.obj")
+bunny = trimesh.load("data/bunny.obj")
 bunny.vertices -= bunny.center_mass
 bunny.apply_transform([[1,0,0,0],
                         [0,0,1,0],
@@ -99,10 +104,10 @@ vertices = torch.tensor(bunny.vertices, dtype=torch.float)
 
 # target = render_norm(vertices, bunny)
 target = render_norm(vertices, bunny)
-imageio.imsave("target.png", target)
+imageio.imsave("data/target.png", target)
 
 
-bunny_sm = trimesh.load("../bunny_sm_sub.obj")
+bunny_sm = trimesh.load("data/bunny_sm_sub.obj")
 bunny_sm.vertices -= bunny_sm.center_mass
 bunny_sm.apply_transform([[1,0,0,0],
                         [0,0,1,0],
