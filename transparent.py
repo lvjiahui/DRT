@@ -6,7 +6,7 @@ import numpy as np
 import imageio
 assert(trimesh.ray.has_embree)
 import PIL.Image
-
+import random
 # trimesh.util.attach_to_log()
 res=256
 
@@ -82,7 +82,7 @@ def trace2(vertices, mesh, origin, ray_dir, depth=1, santy_check=False):
         wo = -ray_dir[hitted]
         cosThetaI = dot(wo, n)
         # print("max={},min={}".format(cosThetaI.max(), cosThetaI.min()))
-        assert cosThetaI.max()<=1.00001 and cosThetaI.min()>=-1.00001, "max={},min={}".format(cosThetaI.max(), cosThetaI.min())
+        assert cosThetaI.max()<=1.1 and cosThetaI.min()>=-1.1, "max={},min={}".format(cosThetaI.max(), cosThetaI.min())
         cosThetaI = cosThetaI.clamp(-1, 1)
         entering = cosThetaI >= 0
 
@@ -146,34 +146,49 @@ def save_image(name, img:torch.tensor):
 
 target_mesh = trimesh.load("/home/jiahui/DR/DR/data/hand.ply")
 target_mesh.apply_transform(TF.rotation_matrix(-np.pi/2, [1,0,0]))
-
-scene = target_mesh.scene()
-# angle = TF.euler_from_matrix(TF.rotation_matrix(np.pi, [0,1,0]))
-angle = None
-scene.set_camera(resolution=(res,res), fov=(60,60), distance = 0.8, center=(0,0.2,0), angles=angle)
-print("R", scene.camera_transform)
-print("K", scene.camera.K)
-origin, ray_dir, pixel_ind = scene.camera_rays()
-origin = torch.from_numpy(origin)
-ray_dir = torch.from_numpy(ray_dir)
-
+target_mesh.export("result/hand_target.ply")
 vertices = torch.tensor(target_mesh.vertices, dtype=torch.float64)
 
-target = torch.zeros(ray_dir.shape, dtype=torch.float64)
+scene = target_mesh.scene()
+
+##################### render from front side
+angle = None
+scene.set_camera(resolution=(res,res), fov=(60,60), distance = 0.8, center=(0,0.2,0), angles=angle)
+origin, ray_dir, _ = scene.camera_rays()
+origin = torch.from_numpy(origin)
+ray_dir = torch.from_numpy(ray_dir)
+check = torch.zeros(ray_dir.shape, dtype=torch.float64)
 ind, color = trace2(vertices, target_mesh, origin, ray_dir, santy_check=True)
-target[ind]=color
-save_image("santy_check.png", target)
+check[ind]=color
+save_image("santy_check.png", check)
 
-target = torch.zeros(ray_dir.shape, dtype=torch.float64)
-ind, color = trace2(vertices, target_mesh, origin, ray_dir,)
-target[ind]=color
-save_image("target.png", target)
 
-target_mask = torch.zeros(ray_dir.shape, dtype=torch.bool)
-target_mask[ind] = True
-target_mesh.export("result/hand_target.ply")
+def render_target(deg):
+    angle = TF.euler_from_matrix(TF.rotation_matrix(np.pi/180*deg, [0,1,0]))
+    scene.set_camera(resolution=(res,res), fov=(60,60), distance = 0.8, center=(0,0.2,0), angles=angle)
+    origin, ray_dir, _ = scene.camera_rays()
+    origin = torch.from_numpy(origin)
+    ray_dir = torch.from_numpy(ray_dir)
 
-mesh_sm = trimesh.load("/home/jiahui/DR/DR/data/untitled.obj")
+    target = torch.zeros(ray_dir.shape, dtype=torch.float64)
+    ind, color = trace2(vertices, target_mesh, origin, ray_dir)
+    target[ind]=color
+    # save_image("back_target.png", back_target)
+
+    target_mask = torch.zeros(ray_dir.shape, dtype=torch.bool)
+    target_mask[ind] = True
+    return target, target_mask, origin, ray_dir
+
+Views = []
+for i in [-30,-15,0,15,30]:
+    Views.append(render_target(i))
+for i in [-30,-15,0,15,30]:
+    Views.append(render_target(i+180))
+
+
+# mesh_sm = trimesh.load("/home/jiahui/DR/DR/data/untitled.obj")
+# mesh_sm = trimesh.load("/home/jiahui/DR/DR/data/hand_sm.obj")
+mesh_sm = trimesh.load("/home/jiahui/DR/tsdf-fusion-python/uv_vh.obj")
 mesh_sm.apply_transform(TF.rotation_matrix(-np.pi/2, [1,0,0]))
 
 mesh_sm.export("result/hand_init.ply")
@@ -191,7 +206,9 @@ uv = uv.view((1,1,mesh_sm.visual.uv.shape[0],2))
 
 laplac = kornia.filters.Laplacian(3)
 
-for it in range(99):
+for it in range(150):
+    V_index = random.randint(0, len(Views)-1)
+    target, target_mask, origin, ray_dir = Views[V_index]
     # Zero out gradients before each iteration
     opt.zero_grad()
 
@@ -208,18 +225,20 @@ for it in range(99):
     mask = (target_mask * render_mask)
     loss = (render[mask]-target[mask]).pow(2).mean()
     curvat = 10*laplac(displacement_map).abs().mean()
+    shrink = 0.01*torch.nn.functional.gelu(1000*displacement_map-0.7517).mean()
     # gif.append(img.detach().numpy())
 
     # loss = (render-target).pow(2).sum()/(256*256)
     # (loss + 0.01*parameter.pow(2).sum()).backward()
-    (loss + curvat).backward()
+    (loss + curvat + shrink).backward()
 
     # Optimizer: take a gradient step
     opt.step()
 
-    # save_image("result/img_{}.png".format(it), render.detach())
-    print('Iteration %03i: error=%g curvat=%g' % (it, loss, curvat))
+    save_image("result/img_{}.png".format(it), render.detach())
+    print('Iteration %03i: error=%g curvat=%g shrink=%g' % (it, loss, curvat, shrink))
+    
 
-
+imageio.imsave("displacment.png", parameter.detach())
 save_image("result/optim.png", render.detach())
 mesh_sm.export("result/hand_optim.ply")
