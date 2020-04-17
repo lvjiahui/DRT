@@ -27,8 +27,17 @@ para_res = 200
 
 import torch
 class MyScene:
-    def __init__(self, scene_path):
-        scene = load_file(scene_path)
+    def __init__(self, shape_path):
+
+        # scene = load_file(scene_path)
+        scene = load_string(        '''
+            <scene version="2.0.0">
+                <shape type="ply">
+                    <string name="filename" value="{}"/>
+                    <bsdf type="conductor"/>
+                </shape>
+            </scene>
+        '''.format(shape_path))
         # Find differentiable scene parameters
         params = traverse(scene)
         self.M_scene = scene
@@ -251,17 +260,18 @@ def render(scene:MyScene, deg=0, santy_check=False):
     img_mask[ind] = True
     return img, img_mask
 
-target_scene = MyScene('/root/mnt/DR/data/hand_target.xml')
+target_scene = MyScene('/root/workspace/data/horse.ply')
 
 check, _ = render(target_scene, santy_check=True)
-save_image("result/santy_check.png", check)
+save_image("/root/workspace/DR/result/santy_check.png", check)
 target_img, target_mask = render(target_scene)
-save_image("result/target.png", target_img)
+save_image("/root/workspace/DR/result/target.png", target_img)
 
 del target_scene
 ek.cuda_malloc_trim()
 
-scene = MyScene('/root/mnt/DR/data/hand.xml')
+# scene = MyScene('/root/workspace/DR/data/hand.xml')
+scene = MyScene('/root/workspace/data/horse_uv.ply')
 
 parameter = torch.zeros((para_res,para_res), dtype=torch.float32, requires_grad=True, device='cuda')
 opt = torch.optim.Adam([parameter], lr=.0002)
