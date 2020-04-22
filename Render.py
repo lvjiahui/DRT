@@ -162,7 +162,11 @@ def trace2(vertices, mesh, origin, ray_dir, depth=1, santy_check=False):
     else:
         if santy_check:
             return torch.ones(ray_dir.shape[0])>0, origin
-        return torch.ones(ray_dir.shape[0])>0, ray_dir
+        else:
+            #return if hit nothing
+            hitted = mesh.ray.intersects_any(origin.detach().cpu(), ray_dir.detach().cpu())
+            index = torch.nonzero(torch.from_numpy(hitted==False))     
+            return index, ray_dir[index]
 
 
 class primary_edge_sample(torch.autograd.Function):
@@ -180,16 +184,17 @@ class primary_edge_sample(torch.autograd.Function):
         y = (ay+by)/2
         mid_point = torch.stack((x,y), dim=1) #[nx2]
         index = mid_point.to(torch.long)
-        output = 0.8 * torch.ones(num, device=device) #[n]
+        output = 0.5 * torch.ones(num, device=device) #[n]
         ctx.mark_non_differentiable(index)
 
         # α(x, y) = (ay - by)x + (bx - ax)y + (axby - bxay)
         Nx = ay-by # (ay - by)x
-        Ny = ax-bx # (bx - ax)y
+        Ny = bx-ax # (bx - ax)y
         N = torch.stack((Nx,Ny), dim=1) #[nx2]
         normalized_N = N / torch.norm(N, dim=1).view(-1,1)
         length = torch.norm( E_pos[:,0]-E_pos[:,1] , dim=1)
-        eps = 1
+        eps = 1e-5
+        # eps = 1
         fu_point = (mid_point + eps*normalized_N).T #[2xn]
         fl_point = (mid_point - eps*normalized_N).T #[2xn]
 
@@ -236,28 +241,30 @@ class primary_edge_sample(torch.autograd.Function):
         f = masku - maskl
         denominator = torch.sqrt(N.pow(2).sum(dim=1))
         dax = by - y
-        day = x - bx
         dbx = y - ay
+        day = x - bx
         dby = ax - x
         dx = torch.stack((dax,dbx),dim=1)
         dy = torch.stack((day,dby),dim=1)
-        # dE_pos = torch.stack((dx,dy),dim=2) #[nx2x2]
-        dE_pos = torch.stack((dx,dy),dim=1) #[nx2x2]
+        dE_pos = torch.stack((dx,dy),dim=2) #[nx2x2]
         dE_pos = dE_pos * (length * f / denominator).view(-1,1,1)
-        ctx.save_for_backward(dE_pos)
+        ctx.save_for_backward(dE_pos/res)
 
         return index, output
+        # ctx.mark_non_differentiable(f)
+        # return index, output, f
 
     @staticmethod
+    # def backward(ctx, grad_index, grad_output, grad_f):
     def backward(ctx, grad_index, grad_output):
         dE_pos = ctx.saved_variables[0]
         grad = dE_pos * grad_output.view(-1,1,1)
-        # print(dE_pos)
+        # print("backward")
         return grad, None, None, None, None
 
 class Scene:
     def __init__(self, mesh_path):
-        mesh = trimesh.load(mesh_path)
+        mesh = trimesh.load(mesh_path, process=False)
         # assert mesh.is_watertight
         self.mesh = mesh
         self.vertices = torch.tensor(mesh.vertices, dtype=Float, device=device)
@@ -300,6 +307,16 @@ class Scene:
         vertices = self.vertices.detach()
         laplac = vertices - self.weightM.mm(vertices) 
         self.hook_rough = torch.norm(laplac, dim=1).abs().mean().item()
+        print(self.hook_rough, torch.norm(grad, dim=1).abs().mean().item())
+        return self.hook_w * laplac + grad
+
+    def laplac_normal_hook(self, grad):
+        vertices = self.vertices.detach()
+        laplac = vertices - self.weightM.mm(vertices) 
+        laplac = (laplac * self.hook_normal).sum(dim=1, keepdim=True)
+        self.hook_rough = laplac.abs().mean().item()
+        laplac[laplac.abs()<0.005]=0
+        # print(laplac.shape, grad.shape)
         return self.hook_w * laplac + grad
 
     def update_verticex(self, vertices: torch.tensor):
@@ -319,11 +336,11 @@ class Scene:
         return image, image_mask
 
     def mask(self, origin: torch.tensor, ray_dir: torch.tensor):
-        ind_tri = self.mesh.ray.intersects_first(origin.detach().cpu(), ray_dir.detach().cpu())
-        hitted = (ind_tri != -1) #[2n]
+        hitted = self.mesh.ray.intersects_any(origin.detach().cpu(), ray_dir.detach().cpu())
         image = torch.zeros((ray_dir.shape[0]), dtype=Float, device=device)
         image[hitted] = 1
         return image
+        
     def silhouette_edge(self, origin: torch.tensor):
         vertices = self.vertices #[Vx3]
         faces = self.E2F #[Ex2x3]
@@ -346,17 +363,29 @@ class Scene:
         silhouette = torch.logical_xor(dot1>0,dot2>0)
         return self.Edges[silhouette]
 
-    def primary_visibility(self, silhouette_edge, R, K, origin):
+    def primary_visibility(self, silhouette_edge, R, K, origin, detach_depth = False):
+        '''
+            detach_depth: bool
+            detach_depth means we don't want the gradient rwt the depth coordinate
+        '''
         V = self.vertices[silhouette_edge.view(-1)] #[2Nx3]
         W = torch.ones([V.shape[0],1], dtype=Float, device=device)
         hemo_v = torch.cat([V, W], dim=1) #[2Nx4]
         v_camera = torch.inverse(R) @ hemo_v.T #[4x2N]
+        if detach_depth: 
+            v_camera[2:3] = v_camera[2:3].detach()
         v_camera = K @ v_camera[:3] #[3x2N]
         pixel_index = v_camera[:2] / v_camera[2]  #[2x2N]
         E_pos = pixel_index.T.reshape(-1,2,2)
-        index, output = primary_edge_sample.apply(E_pos, self.mesh, R, K, origin)
+        index, output = primary_edge_sample.apply(E_pos, self.mesh, R, K, origin) #[Nx2]
+        # index, output, f = primary_edge_sample.apply(E_pos, self.mesh, R, K, origin) #[Nx2]
+        # mask_boudary = (f!=0.)
+        # index, output = index[mask_boudary], output[mask_boudary]
+
         index[:,0] = res-1-index[:,0]
-        return index, output
+        #out of view
+        mask = (index[:,0] < res-1) * (index[:,1] < res-1) * (index[:,0] >= 0) * (index[:,1] >= 0)
+        return index[mask], output[mask]
 
     def project_vert(self, R: torch.tensor, K: torch.tensor, V: torch.tensor):
         W = torch.ones([V.shape[0],1], dtype=Float, device=device)
@@ -382,11 +411,11 @@ class Scene:
         return origin, ray_dir
 
 
-def save_image(name, img:torch.tensor):
+def save_torch(name, img:torch.tensor):
     image = (255 * (img-img.min()) / (img.max()-img.min())).to(torch.uint8)
     imageio.imsave(name, image.view(res,res,-1).permute(1,0,2).cpu())
 
-def PILimage(img:torch.tensor):
+def torch2pil(img:torch.tensor):
     image = (255 * (img-img.min()) / (img.max()-img.min())).to(torch.uint8)
     image = image.view(res,res,-1).permute(1,0,2).cpu().numpy()
     if image.shape[2] == 1: image = image[:,:,0]

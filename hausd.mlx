@@ -1,0 +1,14 @@
+<!DOCTYPE FilterScript>
+<FilterScript>
+ <filter name="Hausdorff Distance">
+  <Param description="Sampled Mesh" type="RichMesh" name="SampledMesh" tooltip="The mesh whose surface is sampled. For each sample we search the closest point on the Target Mesh." value="0" isxmlparam="0"/>
+  <Param description="Target Mesh" type="RichMesh" name="TargetMesh" tooltip="The mesh that is sampled for the comparison." value="1" isxmlparam="0"/>
+  <Param description="Save Samples" type="RichBool" name="SaveSample" tooltip="Save the position and distance of all the used samples on both the two surfaces, creating two new layers with two point clouds representing the used samples." value="false" isxmlparam="0"/>
+  <Param description="Sample Vertices" type="RichBool" name="SampleVert" tooltip="For the search of maxima it is useful to sample vertices and edges of the mesh with a greater care. It is quite probably the the farthest points falls along edges or on mesh vertices, and with uniform montecarlo sampling approachesthe probability of taking a sample over a vertex or an edge is theoretically null.&lt;br>On the other hand this kind of sampling could make the overall sampling distribution slightly biased and slightly affects the cumulative results." value="true" isxmlparam="0"/>
+  <Param description="Sample Edges" type="RichBool" name="SampleEdge" tooltip="See the above comment." value="false" isxmlparam="0"/>
+  <Param description="Sample FauxEdge" type="RichBool" name="SampleFauxEdge" tooltip="See the above comment." value="false" isxmlparam="0"/>
+  <Param description="Sample Faces" type="RichBool" name="SampleFace" tooltip="See the above comment." value="false" isxmlparam="0"/>
+  <Param description="Number of samples" type="RichInt" name="SampleNum" tooltip="The desired number of samples. It can be smaller or larger than the mesh size, and according to the choosed sampling strategy it will try to adapt." value="6337" isxmlparam="0"/>
+  <Param description="Max Distance" type="RichAbsPerc" name="MaxDist" max="1.66099" tooltip="Sample points for which we do not find anything within this distance are rejected and not considered neither for averaging nor for max." value="0.801445" min="0" isxmlparam="0"/>
+ </filter>
+</FilterScript>
