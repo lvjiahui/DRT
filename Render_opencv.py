@@ -16,14 +16,34 @@ import random
 from PIL import Image
 
 
+meshlab_remesh_srcipt = """
+<!DOCTYPE FilterScript>
+<FilterScript>
+ <filter name="Remeshing: Isotropic Explicit Remeshing">
+  <Param value="3" isxmlparam="0" name="Iterations" type="RichInt" description="Iterations" tooltip="Number of iterations of the remeshing operations to repeat on the mesh."/>
+  <Param value="false" isxmlparam="0" name="Adaptive" type="RichBool" description="Adaptive remeshing" tooltip="Toggles adaptive isotropic remeshing."/>
+  <Param value="false" isxmlparam="0" name="SelectedOnly" type="RichBool" description="Remesh only selected faces" tooltip="If checked the remeshing operations will be applied only to the selected faces."/>
+  <Param value="{}" isxmlparam="0" name="TargetLen" type="RichAbsPerc" description="Target Length" min="0" max="214.384" tooltip="Sets the target length for the remeshed mesh edges."/>
+  <Param value="30" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
+  <Param value="false" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
+  <Param value="2.1438" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
+  <Param value="true" isxmlparam="0" name="SplitFlag" type="RichBool" description="Refine Step" tooltip="If checked the remeshing operations will include a refine step."/>
+  <Param value="true" isxmlparam="0" name="CollapseFlag" type="RichBool" description="Collapse Step" tooltip="If checked the remeshing operations will include a collapse step."/>
+  <Param value="true" isxmlparam="0" name="SwapFlag" type="RichBool" description="Edge-Swap Step" tooltip="If checked the remeshing operations will include a edge-swap step, aimed at improving the vertex valence of the resulting mesh."/>
+  <Param value="true" isxmlparam="0" name="SmoothFlag" type="RichBool" description="Smooth Step" tooltip="If checked the remeshing operations will include a smoothing step, aimed at relaxing the vertex positions in a Laplacian sense."/>
+  <Param value="true" isxmlparam="0" name="ReprojectFlag" type="RichBool" description="Reproject Step" tooltip="If checked the remeshing operations will include a step to reproject the mesh vertices on the original surface."/>
+ </filter>
+</FilterScript>
+"""
+
 
 debug = False
 #render resolution
-res=512
+resy=960
+resx=1280
 Float = torch.float64
 device='cuda'
-extIOR, intIOR = 1.0, 1.5
-# extIOR, intIOR = 1.0, 1.15
+extIOR, intIOR = 1.00029, 1.5
 
 @torch.jit.script
 def dot(v1:torch.Tensor, v2:torch.Tensor, keepdim:bool = False):
@@ -48,7 +68,8 @@ def Refract(wo:torch.Tensor, n, eta):
     wt = eta * -wo + (eta * cosThetaI - cosThetaT) * n
 
     # wt should be already unit length, Numerical error?
-    wt = wt / wt.norm(p=2, dim=1, keepdim=True).detach()
+    # wt = wt / wt.norm(p=2, dim=1, keepdim=True).detach()
+    wt = wt / wt.norm(p=2, dim=1, keepdim=True)
 
     return totalInerR, wt
 
@@ -66,21 +87,20 @@ def FrDielectric(cosThetaI:torch.Tensor, etaI, etaT):
 
 
 @torch.jit.script
-def JIT_Dintersect(origin:torch.Tensor, ray_dir:torch.Tensor, hitted:torch.Tensor, faces:torch.Tensor, vertices:torch.Tensor):
+def JIT_Dintersect(origin:torch.Tensor, ray_dir:torch.Tensor, hitted:torch.Tensor, triangles:torch.Tensor, normals:torch.Tensor):
     '''
         differentiable ray-triangle intersection
-        # <Fast, Minimum Storage Ray/Triangle Intersection>
+        # <Fast, Minimum Storage Ray/triangle Intersection>
         # https://cadxfem.org/inf/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
     '''
-    v0 = vertices[faces[:,0]]
-    v1 = vertices[faces[:,1]]
-    v2 = vertices[faces[:,2]]
+    v0 = triangles[:, 0]
+    v1 = triangles[:, 1]
+    v2 = triangles[:, 2]  
+
     # Find vectors for two edges sharing v[0]
     edge1 = v1-v0
     edge2 = v2-v0
-    n = torch.cross(edge1, edge2)
-    # n = n / n.norm(dim=1).view(-1,1)
-    n = n / n.norm(dim=1, p=2, keepdim=True).detach()
+
     pvec = torch.cross(ray_dir[hitted], edge2)
     # If determinant is near zero, ray lies in plane of triangle
     det = dot(edge1, pvec)
@@ -94,12 +114,30 @@ def JIT_Dintersect(origin:torch.Tensor, ray_dir:torch.Tensor, hitted:torch.Tenso
     v = dot(ray_dir[hitted], qvec) * inv_det
     # Calculate T
     t = dot(edge2, qvec) * inv_det
+
+
+
     # A = torch.stack( (-edge1,-edge2,ray_dir[hitted]), dim=2)
     # B = -tvec.view((-1,3,1))
     # X, LU = torch.solve(B, A)
     # u = X[:,0,0]
     # v = X[:,1,0]
     # t = X[:,2,0]
+
+
+    n = torch.cross(edge1, edge2)
+    n = n / n.norm(dim=1, p=2, keepdim=True)
+    # n = n / n.norm(dim=1, p=2, keepdim=True).detach()
+
+    # interpolate normal
+    # u = u.detach()
+    # v = v.detach()
+    # n0 = normals[:,0]
+    # n1 = normals[:,1]
+    # n2 = normals[:,2]
+    # n = (1-u-v).reshape((-1,1)) * n0 + u.reshape((-1,1)) * n1 + v.reshape((-1, 1)) * n2
+    # n = n / n.norm(p=2, dim=1, keepdim=True)
+
     # assert v.max()<=1.001 and v.min()>=-0.001 , (v.max().item() ,v.min().item() )
     # assert u.max()<=1.001 and u.min()>=-0.001 , (u.max().item() ,u.min().item() )
     # assert (v+u).max()<=1.001 and (v+u).min()>=-0.001
@@ -107,10 +145,71 @@ def JIT_Dintersect(origin:torch.Tensor, ray_dir:torch.Tensor, hitted:torch.Tenso
     # if(t.min()<0): print((t<0).sum())
     return u, v, t, n, hitted
 
+@torch.jit.script
+def JIT_area_var(triangles):
+    v0 = triangles[:, 0]
+    v1 = triangles[:, 1]
+    v2 = triangles[:, 2]  
+    edge1 = v1-v0
+    edge2 = v2-v0
+    area = torch.cross(edge1,edge2).norm(p=2, dim=1)
+    area_ave = area.mean().detach()
+    area_var = ((area-area_ave)/area_ave).pow(2).mean()
+    return area_var
+
+@torch.jit.script
+def JIT_edge_var(vertices, edge):
+    e1 = vertices[edge[:,0]]
+    e2 = vertices[edge[:,1]]
+    edge_len = (e1-e2).norm(p=2,dim=1)
+    edge_ave =  edge_len.mean().detach()
+    edge_var = ((edge_len-edge_ave)/edge_ave).pow(2).mean()
+    return edge_var
+
+@torch.jit.script
+def edge_face_norm(vertices, E2F):
+    faces = E2F #[Ex2x3]
+    v0 = vertices[faces[:,0,0]]
+    v1 = vertices[faces[:,0,1]]
+    v2 = vertices[faces[:,0,2]]
+    EF1N = torch.cross(v1-v0, v2-v0) #[Ex3]
+    EF1N = EF1N / EF1N.norm(p=2, dim=1, keepdim=True)
+
+    v0 = vertices[faces[:,1,0]]
+    v1 = vertices[faces[:,1,1]]
+    v2 = vertices[faces[:,1,2]]
+    EF2N = torch.cross(v1-v0, v2-v0) #[Ex3]    
+    EF2N = EF2N / EF2N.norm(p=2, dim=1, keepdim=True)
+    return EF1N, EF2N
+
+@torch.jit.script
+def JIT_corner_angles(triangles):
+    u = triangles[:, 1] - triangles[:, 0]
+    v = triangles[:, 2] - triangles[:, 0]
+    w = triangles[:, 2] - triangles[:, 1]
+
+    face_N = torch.cross(u,v)
+    face_N = face_N / face_N.norm(dim=1, p=2, keepdim=True)
+
+    u = u / u.norm(dim=1, p=2,keepdim=True)
+    v = v / v.norm(dim=1, p=2,keepdim=True)
+    w = w / w.norm(dim=1, p=2,keepdim=True)
+    face_angles = torch.empty_like(triangles[:,:,0])
+
+    # clip to make sure we don't float error past 1.0
+    face_angles[:, 0] = torch.acos(torch.clamp(dot(u, v), -1, 1))
+    face_angles[:, 1] = torch.acos(torch.clamp(dot(-u, w), -1, 1))
+    # the third angle is just the remaining
+    face_angles[:, 2] = np.pi - face_angles[:, 0] - face_angles[:, 1]
+    corner_angles = face_angles.view(-1)
+
+
+    return corner_angles, face_N
 
 class primary_edge_sample(torch.autograd.Function):
     @staticmethod
     def forward(ctx, E_pos, intersect_fun, camera_M, ray_origin):
+        assert ray_origin.dim() == 1
         num = len(E_pos)
         R, K, R_inverse, K_inverse = camera_M
         # E_pos [nx2x2]
@@ -128,16 +227,15 @@ class primary_edge_sample(torch.autograd.Function):
         Nx = ay-by # (ay - by)x
         Ny = bx-ax # (bx - ax)y
         N = torch.stack((Nx,Ny), dim=1) #[nx2]
-        normalized_N = N / torch.norm(N, dim=1).view(-1,1)
-        length = torch.norm( E_pos[:,0]-E_pos[:,1] , dim=1)
-        # eps = 1e-5
-        eps = 2
-        fu_point = (sample_point + eps*normalized_N).T #[2xn]
-        fl_point = (sample_point - eps*normalized_N).T #[2xn]
+        normalized_N = N / N.norm(dim=1, keepdim=True)
+        length = ( E_pos[:,0]-E_pos[:,1] ).norm(dim=1)
+        eps = 1
+        fu_point = sample_point + eps*normalized_N #[nx2]
+        fl_point = sample_point - eps*normalized_N #[nx2]
 
-        f_point = torch.cat((fu_point,fl_point), dim=1) #[2x2n]
+        f_point = torch.cat((fu_point,fl_point), dim=0).T #[2x2n]
         W = torch.ones([1, f_point.shape[1]], dtype=Float, device=device)
-        camera_p = K_inverse @ torch.cat([-f_point, -W], dim=0) # pixel at z=-1
+        camera_p = K_inverse @ torch.cat([f_point, W], dim=0) # pixel at z=1
         camera_p = torch.cat([camera_p, W], dim=0)
         world_p = R @ camera_p #[4x2n]
         world_p = world_p[:3].T #[2nx3]
@@ -147,33 +245,6 @@ class primary_edge_sample(torch.autograd.Function):
         mask = torch.zeros(2*num, device=device)
         mask[hitted] = 1
         f = mask[:num] - mask[num:]
-
-        # #==========fu==============
-        # W = torch.ones([1, fu_point.shape[1]], dtype=Float, device=device)
-        # camera_p = K_inverse @ torch.cat([-fu_point, -W], dim=0) # pixel at z=-1
-        # camera_p = torch.cat([camera_p, W], dim=0)
-        # world_p = R @ camera_p #[4xn]
-        # world_p = world_p[:3].T #[nx3]
-        # ray_dir = world_p - ray_origin.view(-1,3)
-        # ray_origin = ray_origin.expand_as(ray_dir)
-        # hittedu, _ = intersect_fun(ray_origin, ray_dir)
-
-
-        # #==========fl==============
-        # W = torch.ones([1, fl_point.shape[1]], dtype=Float, device=device)
-        # camera_p = K_inverse @ torch.cat([-fl_point, -W], dim=0) # pixel at z=-1
-        # camera_p = torch.cat([camera_p, W], dim=0)
-        # world_p = R @ camera_p #[4xn]
-        # world_p = world_p[:3].T #[nx3]
-        # ray_dir = world_p - ray_origin.view(-1,3)
-        # ray_origin = ray_origin.expand_as(ray_dir)
-        # hittedl, _ = intersect_fun(ray_origin, ray_dir)
-
-        # masku = torch.zeros(num, device=device)
-        # maskl = torch.zeros(num, device=device)
-        # masku[hittedu]=1
-        # maskl[hittedl]=1
-        # f = masku - maskl
 
         denominator = torch.sqrt(N.pow(2).sum(dim=1))
         dax = by - y
@@ -187,53 +258,89 @@ class primary_edge_sample(torch.autograd.Function):
 
         valid_edge = f.abs() > 1e-5
         index = sample_point[valid_edge].to(torch.long)
+
+        # debug
+        # index = torch.cat((fu_point[valid_edge],fl_point[valid_edge]), dim=0)
+        # index = fu_point[valid_edge].to(torch.long)
+
         output = 0.5 * torch.ones(len(index), device=device)
 
         ctx.mark_non_differentiable(index)
-        ctx.save_for_backward(dE_pos/res, valid_edge)
+        ctx.save_for_backward(dE_pos/resy, valid_edge)
 
 
         return index, output
-        # ctx.mark_non_differentiable(f)
-        # return index, output, f
+
 
     @staticmethod
-    # def backward(ctx, grad_index, grad_output, grad_f):
+
     def backward(ctx, grad_index, grad_output):
         dE_pos, valid_edge = ctx.saved_variables
         dE_pos[valid_edge] *= grad_output.view(-1,1,1)
-
         return dE_pos, None, None, None, None
 
 
 class Scene:
-    def __init__(self, mesh_path):
+    def __init__(self, mesh_path, cuda_device = 0):
+        self.optix_mesh = optix.optix_mesh(cuda_device)
+        self.update_mesh(mesh_path)
+
+    def update_mesh(self, mesh_path):
         mesh = trimesh.load(mesh_path, process=False)
-        # assert mesh.is_watertight
+        assert mesh.is_watertight
         self.mesh = mesh
         self.vertices = torch.tensor(mesh.vertices, dtype=Float, device=device)
         self.faces = torch.tensor(mesh.faces, dtype=torch.long, device=device)
-        opt_v = self.vertices.to(torch.float32).to(device)
-        opt_F = self.faces.to(torch.int32).to(device)
-        self.optix_mesh = optix.optix_mesh(opt_F, opt_v)
-        self.scene = mesh.scene()
+        self.triangles = self.vertices[self.faces] #[Fx3x3]
+
+        opt_v = self.vertices.detach().to(torch.float32).to(device)
+        opt_F = self.faces.detach().to(torch.int32).to(device)
+        self.optix_mesh.update_mesh(opt_F, opt_v)
+
+        self.init_VN()
         self.init_weightM()
         self.init_edge()
+
+
+    def init_VN(self):
+        faces = self.faces.detach()
+        # triangles = self.triangles.detach()
+        triangles = self.triangles
+        vertices = self.vertices.detach()
+        corner_angles, face_N = JIT_corner_angles(triangles)
+        if torch.isnan(corner_angles).any():
+            print("nan in corner_angles")
+        if torch.isnan(face_N).any():
+            print("nan in face_N")
+        row = faces.view(-1)
+        col = torch.arange(len(faces), device=device).unsqueeze(1).expand(-1,3).reshape(-1)
+        coo = torch.stack((row,col))
+        weight = corner_angles.detach()
+        # weight = torch.ones(len(col), dtype=Float, device=device) 
+        ver_angle_M = torch.sparse.FloatTensor(coo, weight, torch.Size([len(vertices), len(faces)]))
+        vert_N = ver_angle_M.mm(face_N) 
+        self.normals = vert_N / vert_N.norm(dim=1, p=2, keepdim=True)
 
     def init_edge(self):
         '''
         # Calculate E2V_index for silhouette detection
         '''
         mesh = self.mesh
+        e1 = mesh.vertices[mesh.edges[:,0]]
+        e2 = mesh.vertices[mesh.edges[:,1]]
+        self.mean_len = np.linalg.norm(e1-e2, axis=1).mean()
+
         # require_count=2 means edge with exactly two face (watertight edge)
-        Egroups = trimesh.grouping.group_rows(mesh.edges_sorted, )
+        Egroups = trimesh.grouping.group_rows(mesh.edges_sorted, 2)
         # unique, undirectional edges
         edges = mesh.edges_sorted[Egroups[:,0]]
-        Edges = torch.tensor(edges, device=device)
         E2F_index = mesh.edges_face[Egroups] #[Ex2]
-        E2F = mesh.faces[E2F_index] #[Ex2x3]
+        E2F = self.faces[E2F_index] #[Ex2x3]
+        Edges = torch.tensor(edges, device=device)
         self.Edges = Edges
         self.E2F = E2F
+
+
 
     def init_weightM(self):
         '''
@@ -250,13 +357,21 @@ class Scene:
         size = len(self.vertices)
         self.weightM = torch.sparse.FloatTensor(coo, weight, torch.Size([size, size]))
 
+        # row = self.faces.view(-1)
+        # col = torch.arange(len(faces), device=device).unsqueeze(1).expand(-1,3).reshape(-1)
+        # coo = torch.stack((row,col))
+        # weight = torch.ones(len(col), dtype=Float, device=device)  
+        # self.ver_face_M = torch.sparse.FloatTensor(coo, weight, torch.Size([len(self.vertices), len(self.faces)]))
+
     def update_verticex(self, vertices:torch.Tensor):
-        opt_v = vertices.to(torch.float32).to(device)
+        opt_v = vertices.detach().to(torch.float32).to(device)
         self.optix_mesh.update_vert(opt_v)
         self.mesh.vertices = vertices.detach().cpu().numpy()
         self.vertices = vertices
+        self.triangles = vertices[self.faces] #[Fx3x3]
+        self.init_VN()
 
-    def opt_intersect(self, origin:torch.Tensor, ray_dir:torch.Tensor):
+    def optix_intersect(self, origin:torch.Tensor, ray_dir:torch.Tensor):
         optix_o = origin.to(torch.float32).to(device)
         optix_d = ray_dir.to(torch.float32).to(device)
         Ray = torch.cat([optix_o, optix_d], dim=1)
@@ -269,6 +384,13 @@ class Scene:
     # def apply_transform(self, matrix):
     #     self.mesh.apply_transform(matrix)
     #     self.vertices = torch.tensor(self.mesh.vertices, dtype=Float, device=device)
+
+
+    def edge_var(self):
+        return JIT_edge_var(self.vertices, self.Edges)
+
+    def area_var(self):
+        return JIT_area_var(self.triangles)
 
     def laplac_hook(self, grad):
         # print("hook")
@@ -287,8 +409,6 @@ class Scene:
         # print(laplac.shape, grad.shape)
         return self.hook_w * laplac + grad
 
-
-
     def render_transparent(self, origin:torch.Tensor, ray_dir:torch.Tensor):
         image = torch.zeros(ray_dir.shape, dtype=Float, device=device)
         ind, color = self.trace2(origin, ray_dir)
@@ -297,33 +417,30 @@ class Scene:
         image_mask[ind] = True
         return image, image_mask
 
-    def mask(self, origin:torch.Tensor, ray_dir:torch.Tensor):
-        hitted, faces = self.opt_intersect(origin, ray_dir)
+    def render_mask(self, origin:torch.Tensor, ray_dir:torch.Tensor):
+        hitted, faces = self.optix_intersect(origin, ray_dir)
         image = torch.zeros((ray_dir.shape[0]), dtype=Float, device=device)
         image[hitted] = 1
         return image
-        
+    
+    def dihedral_angle(self):
+        EF1N, EF2N = edge_face_norm(self.vertices, self.E2F)
+        angle = dot(EF1N, EF2N)
+        return angle
+
     def silhouette_edge(self, origin:torch.Tensor):
-        vertices = self.vertices #[Vx3]
-        faces = self.E2F #[Ex2x3]
-        v0 = vertices[faces[:,0,0]]
-        v1 = vertices[faces[:,0,1]]
-        v2 = vertices[faces[:,0,2]]
-        N1 = torch.cross(v1-v0, v2-v0) #[Ex3]
-        N1 = N1 / N1.norm(dim=1).view(-1,1)
-        dir = origin - v0
-        dot1 = dot(N1, dir)
+        assert origin.dim() == 1
+        vertices = self.vertices.detach() #[Vx3]
+        faces = self.E2F
 
-        v0 = vertices[faces[:,1,0]]
-        v1 = vertices[faces[:,1,1]]
-        v2 = vertices[faces[:,1,2]]
-        N2 = torch.cross(v1-v0, v2-v0) #[Ex3]    
-        N2 = N2 / N2.norm(dim=1).view(-1,1)
-        dir = origin - v0
-        dot2 = dot(N2, dir)
+        EF1N, EF2N = edge_face_norm(vertices, faces)
+        F1v = vertices[faces[:,0,0]]
+        F2v = vertices[faces[:,1,0]]
+        dot1 = dot(EF1N, origin - F1v)
+        dot2 = dot(EF2N, origin - F2v)
 
-        silhouette = torch.logical_xor(dot1>0,dot2>0)
-        return self.Edges[silhouette]
+        silhouette_edge = torch.logical_xor(dot1>0,dot2>0)
+        return self.Edges[silhouette_edge]
 
     def primary_visibility(self, silhouette_edge, camera_M, origin, detach_depth = False):
         '''
@@ -341,11 +458,10 @@ class Scene:
         v_camera = K @ v_camera[:3] #[3x2N]
         pixel_index = v_camera[:2] / v_camera[2]  #[2x2N]
         E_pos = pixel_index.T.reshape(-1,2,2)
-        index, output = primary_edge_sample.apply(E_pos, self.opt_intersect, camera_M, origin) #[Nx2]
+        index, output = primary_edge_sample.apply(E_pos, self.optix_intersect, camera_M, origin) #[Nx2]
 
-        index[:,0] = res-1-index[:,0]
         #out of view
-        mask = (index[:,0] < res-1) * (index[:,1] < res-1) * (index[:,0] >= 0) * (index[:,1] >= 0)
+        mask = (index[:,0] < resx-1) * (index[:,1] < resy-1) * (index[:,0] >= 0) * (index[:,1] >= 0)
         return index[mask], output[mask]
 
     def project_vert(self, camera_M, V:torch.Tensor):
@@ -356,81 +472,20 @@ class Scene:
         v_camera = R_inverse @ hemo_v.T #[3xN]
         v_camera = K @ v_camera[:3]
         pixel_index = v_camera[:2] / v_camera[2]
-        pixel_index = pixel_index.to(torch.long)
-        pixel_index[0] = res-1 - pixel_index[0]
+        pixel_index = pixel_index.to(torch.long).T
         return pixel_index
-    def set_camera(self, fov, distance, center, angles):
-        self.scene.set_camera(resolution=(res,res), fov=fov, distance = distance, center=center, angles=angles)
-    def camera_M(self):
-        scene = self.scene
-        R = torch.tensor(scene.camera_transform, dtype=Float, device=device)
-        K = torch.tensor(scene.camera.K, dtype=Float, device=device)
-        R_inverse = torch.inverse(R)
-        K_inverse = torch.inverse(K)
-        return R, K, R_inverse, K_inverse
-    def generate_ray(self):
-        scene = self.scene
-        origin, ray_dir, _ = scene.camera_rays()
-        origin = torch.tensor(origin, dtype=Float, device=device)
-        ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
-        return origin, ray_dir
-
-    # def Dintersect(self, origin:torch.Tensor, ray_dir:torch.Tensor):
-    #     hitted, faces = self.opt_intersect(origin, ray_dir)
-
-    #     # <<Fast, Minimum Storage Ray/Triangle Intersection>> 
-    #     # https://cadxfem.org/inf/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
-    #     vertices = self.vertices
-    #     v0 = vertices[faces[:,0]]
-    #     v1 = vertices[faces[:,1]]
-    #     v2 = vertices[faces[:,2]]
-
-    #     # Find vectors for two edges sharing v[0]
-    #     edge1 = v1-v0
-    #     edge2 = v2-v0
-    #     n = torch.cross(edge1, edge2)
-    #     # n = n / n.norm(dim=1).view(-1,1)
-    #     n = n / n.norm(dim=1, p=2).view(-1,1).detach()
-
-    #     pvec = torch.cross(ray_dir[hitted], edge2)
-    #     # If determinant is near zero, ray lies in plane of triangle
-    #     det = dot(edge1, pvec)
-    #     inv_det = 1/det
-    #     # # Calculate distance from v[0] to ray origin
-    #     tvec = origin[hitted] - v0
-    #     # Calculate U parameter
-    #     u = dot(tvec, pvec) * inv_det
-    #     qvec = torch.cross(tvec, edge1)
-    #     # Calculate V parameter
-    #     v = dot(ray_dir[hitted], qvec) * inv_det
-    #     # Calculate T
-    #     t = dot(edge2, qvec) * inv_det
-
-    #     # A = torch.stack( (-edge1,-edge2,ray_dir[hitted]), dim=2)
-    #     # B = -tvec.view((-1,3,1))
-    #     # X, LU = torch.solve(B, A)
-    #     # u = X[:,0,0]
-    #     # v = X[:,1,0]
-    #     # t = X[:,2,0]
-    #     # assert v.max()<=1.001 and v.min()>=-0.001 , (v.max().item() ,v.min().item() )
-    #     # assert u.max()<=1.001 and u.min()>=-0.001 , (u.max().item() ,u.min().item() )
-    #     # assert (v+u).max()<=1.001 and (v+u).min()>=-0.001
-    #     # assert t.min()>0, (t<0).sum()
-    #     # if(t.min()<0): print((t<0).sum())
-
-    #     return u, v, t, n, hitted
 
     def Dintersect(self, origin:torch.Tensor, ray_dir:torch.Tensor):
-        hitted, faces = self.opt_intersect(origin, ray_dir)
-        vertices = self.vertices
-        return JIT_Dintersect(origin,ray_dir,hitted,faces,vertices)
-
+        hitted, faces = self.optix_intersect(origin, ray_dir)
+        triangles = self.vertices[faces]
+        normals = self.normals[faces]
+        return JIT_Dintersect(origin, ray_dir, hitted, triangles, normals)
 
 
     def trace2(self, origin, ray_dir, depth=1, santy_check=False):
         def debug_cos():
             index = cosThetaI.argmax()
-            return wo[index].item() , n[index].item() 
+            return wo[index] , n[index]
         if (depth <= 2):
             # etaI, etaT = extIOR, intIOR
             u, v, t, n, hitted = self.Dintersect(origin, ray_dir)
@@ -496,10 +551,24 @@ class Scene:
 
 def save_torch(name, img:torch.Tensor):
     image = (255 * (img-img.min()) / (img.max()-img.min())).to(torch.uint8)
-    imageio.imsave(name, image.view(res,res,-1).permute(1,0,2).cpu())
+    imageio.imsave(name, image.view(resy,resx,-1).cpu())
 
 def torch2pil(img:torch.Tensor):
     image = (255 * (img-img.min()) / (img.max()-img.min())).to(torch.uint8)
-    image = image.view(res,res,-1).permute(1,0,2).cpu().numpy()
+    image = image.view(resy,resx,-1).cpu().numpy()
     if image.shape[2] == 1: image = image[:,:,0]
     return Image.fromarray(image)
+
+
+if __name__ ==  '__main__':
+    import h5py
+    scene =  Scene("/root/workspace/DR/result/mouse_sm.ply")
+    h5data = h5py.File('/root/workspace/data/mouse.h5','r')
+    origin = h5data['ray'][0,:,:3]
+    ray_dir = h5data['ray'][0,:,3:6]
+    origin = torch.tensor(origin, dtype=Float, device=device)
+    ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
+    image = torch.zeros(ray_dir.shape, dtype=Float, device=device)
+    ind, color = scene.trace2(origin, ray_dir, santy_check=True)
+    image[ind]=color
+    save_torch('/root/workspace/DR/result/santy_check.png', image)
