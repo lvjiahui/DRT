@@ -24,7 +24,7 @@ meshlab_remesh_srcipt = """
   <Param value="false" isxmlparam="0" name="Adaptive" type="RichBool" description="Adaptive remeshing" tooltip="Toggles adaptive isotropic remeshing."/>
   <Param value="false" isxmlparam="0" name="SelectedOnly" type="RichBool" description="Remesh only selected faces" tooltip="If checked the remeshing operations will be applied only to the selected faces."/>
   <Param value="{}" isxmlparam="0" name="TargetLen" type="RichAbsPerc" description="Target Length" min="0" max="214.384" tooltip="Sets the target length for the remeshed mesh edges."/>
-  <Param value="30" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
+  <Param value="10" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
   <Param value="false" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
   <Param value="2.1438" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
   <Param value="true" isxmlparam="0" name="SplitFlag" type="RichBool" description="Refine Step" tooltip="If checked the remeshing operations will include a refine step."/>
@@ -146,13 +146,18 @@ def JIT_Dintersect(origin:torch.Tensor, ray_dir:torch.Tensor, hitted:torch.Tenso
     return u, v, t, n, hitted
 
 @torch.jit.script
-def JIT_area_var(triangles):
+def JIT_area(triangles):
     v0 = triangles[:, 0]
     v1 = triangles[:, 1]
     v2 = triangles[:, 2]  
     edge1 = v1-v0
     edge2 = v2-v0
     area = torch.cross(edge1,edge2).norm(p=2, dim=1)
+    return area
+
+@torch.jit.script
+def JIT_area_var(triangles):
+    area = JIT_area(triangles)
     area_ave = area.mean().detach()
     area_var = ((area-area_ave)/area_ave).pow(2).mean()
     return area_var
@@ -392,6 +397,9 @@ class Scene:
     def area_var(self):
         return JIT_area_var(self.triangles)
 
+    def area_sum(self):
+        return JIT_area(self.triangles).sum()
+
     def laplac_hook(self, grad):
         # print("hook")
         vertices = self.vertices.detach()
@@ -410,12 +418,14 @@ class Scene:
         return self.hook_w * laplac + grad
 
     def render_transparent(self, origin:torch.Tensor, ray_dir:torch.Tensor):
-        image = torch.zeros(ray_dir.shape, dtype=Float, device=device)
+        out_ori = torch.zeros(ray_dir.shape, dtype=Float, device=device)
+        out_dir = torch.zeros(ray_dir.shape, dtype=Float, device=device)
         ind, color = self.trace2(origin, ray_dir)
-        image[ind]=color
-        image_mask = torch.zeros(ray_dir.shape, dtype=torch.bool, device=device)
-        image_mask[ind] = True
-        return image, image_mask
+        out_ori[ind] = color[0]
+        out_dir[ind] = color[1]
+        mask = torch.zeros(ray_dir.shape, dtype=torch.bool, device=device)
+        mask[ind] = True
+        return out_ori, out_dir, mask
 
     def render_mask(self, origin:torch.Tensor, ray_dir:torch.Tensor):
         hitted, faces = self.optix_intersect(origin, ray_dir)
@@ -538,7 +548,7 @@ class Scene:
             return hitted[refracted][index], color
         else:
             if santy_check:
-                return torch.ones(ray_dir.shape[0])>0, origin
+                return torch.ones(ray_dir.shape[0])>0, (origin, ray_dir)
             else:
                 #return if hit nothing
                 optix_o = origin.to(torch.float32).to(device)
@@ -547,7 +557,7 @@ class Scene:
                 T, ind = self.optix_mesh.intersect(Ray)
                 missed = T<0
                 missed = torch.nonzero(missed).squeeze()
-                return missed, ray_dir[missed]
+                return missed, (origin[missed], ray_dir[missed])
 
 def save_torch(name, img:torch.Tensor):
     image = (255 * (img-img.min()) / (img.max()-img.min())).to(torch.uint8)
@@ -570,5 +580,5 @@ if __name__ ==  '__main__':
     ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
     image = torch.zeros(ray_dir.shape, dtype=Float, device=device)
     ind, color = scene.trace2(origin, ray_dir, santy_check=True)
-    image[ind]=color
+    image[ind]=color[0]
     save_torch('/root/workspace/DR/result/santy_check.png', image)
