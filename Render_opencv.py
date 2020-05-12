@@ -24,9 +24,9 @@ meshlab_remesh_srcipt = """
   <Param value="false" isxmlparam="0" name="Adaptive" type="RichBool" description="Adaptive remeshing" tooltip="Toggles adaptive isotropic remeshing."/>
   <Param value="false" isxmlparam="0" name="SelectedOnly" type="RichBool" description="Remesh only selected faces" tooltip="If checked the remeshing operations will be applied only to the selected faces."/>
   <Param value="{}" isxmlparam="0" name="TargetLen" type="RichAbsPerc" description="Target Length" min="0" max="214.384" tooltip="Sets the target length for the remeshed mesh edges."/>
-  <Param value="10" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
-  <Param value="false" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
-  <Param value="2.1438" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
+  <Param value="180" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
+  <Param value="true" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
+  <Param value="1" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
   <Param value="true" isxmlparam="0" name="SplitFlag" type="RichBool" description="Refine Step" tooltip="If checked the remeshing operations will include a refine step."/>
   <Param value="true" isxmlparam="0" name="CollapseFlag" type="RichBool" description="Collapse Step" tooltip="If checked the remeshing operations will include a collapse step."/>
   <Param value="true" isxmlparam="0" name="SwapFlag" type="RichBool" description="Edge-Swap Step" tooltip="If checked the remeshing operations will include a edge-swap step, aimed at improving the vertex valence of the resulting mesh."/>
@@ -259,8 +259,8 @@ class primary_edge_sample(torch.autograd.Function):
         dx = torch.stack((dax,dbx),dim=1)
         dy = torch.stack((day,dby),dim=1)
         dE_pos = torch.stack((dx,dy),dim=2) #[nx2x2]
-        dE_pos = dE_pos * (length * f / denominator).view(-1,1,1)
-
+        dE_pos = dE_pos * (length * f / denominator).view(-1,1,1) #[n] --> [nx1x1]
+  
         valid_edge = f.abs() > 1e-5
         index = sample_point[valid_edge].to(torch.long)
 

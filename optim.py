@@ -34,8 +34,8 @@ def interp_R(start, end, it, Pass):
 
 
 
-def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
-
+def optimize(HyperParams, cuda_num = 0, output=True, track=None):
+    name = HyperParams['name']
     def setup_opt(scene, lr, HyperParams):
 
         init_vertices = scene.vertices
@@ -61,6 +61,10 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
         cmd = "DISPLAY=:1 DR/MeshLabServer2020.04-linux.AppImage -i " + tmpply + " -o "  + remeshply + " -s " + script
         assert(os.system(ssh + cmd + " 1>/dev/null 2>&1") == 0)
         scene.update_mesh(remeshply)
+
+        # assert(os.system(f"cp {tmpply} /root/workspace/show/mouse/{i_pass}_tmp.ply") == 0)
+        # assert(os.system(f"cp {remeshply} /root/workspace/show/mouse/{i_pass}_remesh.ply") == 0)
+
         # os.system('rm '+tmpply)
         # os.system('rm '+remeshply)
         os.system('rm '+script)
@@ -104,7 +108,7 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
 
         return vh_loss
 
-    def cal_var_loss(scene, Render):
+    def cal_var_loss(scene):
         # var_loss = 2*scene.area_var()
         # var_loss = 2*scene.edge_var()
         laplac = scene.vertices - scene.weightM.mm(scene.vertices) 
@@ -114,7 +118,7 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
         var_loss = torch.norm(vertical_laplac/scene.mean_len, dim=1).pow(2).mean()    
         return var_loss
 
-    def cal_sm_loss(scene, HyperParams):
+    def cal_sm_loss(scene):
         if HyperParams['sm_method'] == 'laplac' :
             laplac = scene.vertices - scene.weightM.mm(scene.vertices) 
             sm_loss = torch.norm(laplac/scene.mean_len, dim=1).pow(2).mean()  
@@ -125,7 +129,6 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
         if HyperParams['sm_method'] == 'dihedral' :
             dihedral_angle = scene.dihedral_angle() # cosine of angle [-1,1]
             dihedral_angle = -torch.log(1+dihedral_angle)
-            assert not torch.isnan(dihedral_angle).any()
             # sm_loss = dihedral_angle.mean()
             sm_loss = 10*dihedral_angle.mean()/(scene.mean_len)
             # sm_loss = 20*dihedral_angle.mean()/(scene.mean_len*scene.mean_len)
@@ -144,15 +147,36 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
         target = target  - render_out_ori.detach()
         target = target/target.norm(dim=1, keepdim=True)
         diff = (render_out_dir - target)
-        valid_mask = (diff.norm(dim=1)<0.5) * valid * render_mask[:,0]
-        # valid_mask = valid * render_mask[:,0]
-        ray_loss = (diff[valid_mask]).pow(2).mean()
+        # valid_mask = (diff.norm(dim=1)<0.5) * valid * render_mask[:,0]
+        valid_mask = valid * render_mask[:,0]
+
+        # diff = 1-Render.dot(render_out_dir, target)
+        # valid_mask = (diff<HyperParams['ray_thred']) * valid * render_mask[:,0]
+        
+        # ray_loss = (diff[valid_mask]).pow(2).mean()
+        ray_loss = (diff[valid_mask]).pow(2).sum() / 1e5
+        # ray_loss = 7 * ray_loss / (scene.mean_len)
 
         # dot = Render.dot(render_out_dir, target)[valid_mask]
         # ray_loss = (1-torch.nn.functional.relu(dot)).mean()
         return ray_loss
 
-
+    def save_illustration():
+        out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(36)
+        target = out_origin
+        render_out_ori, render_out_dir, render_mask = scene.render_transparent(origin, ray_dir)
+        target = target  - render_out_ori.detach()
+        target = target/target.norm(dim=1, keepdim=True)
+        diff = (render_out_dir - target)
+        # valid_mask = (diff.norm(dim=1)<0.5) * valid * render_mask[:,0]
+        valid_mask = valid * render_mask[:,0]       
+        image = torch.zeros_like(diff)
+        image[valid_mask] = diff[valid_mask]
+        image = image.pow(2).sum(dim=1,keepdim=True).sqrt()
+        image[0] = 1.5
+        # assert image.max() <= 1.51
+        image[image>1.5]=1.5
+        Render.save_torch(f"/root/workspace/show/mouse/{i_pass}_{it}.png", image)
 
     pid = os.getpid()
     # os.environ['CUDA_VISIBLE_DEVICES']=str(cuda_num)
@@ -202,49 +226,75 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
         camera_M = (R, K, R_inverse, K_inverse)
         Views.append((out_dir, out_origin, valid, mask, origin, ray_dir, camera_M))
 
-    # scene = Render.Scene(f"/root/workspace/data/{name}_vh.ply")
-    scene = Render.Scene(f"/root/workspace/DR/result/{name}_sm.ply")
+    def get_view_torch(V_index):
+        out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = Views[V_index]
+        R, K, R_inverse, K_inverse = camera_M
+        out_dir = torch.tensor(out_dir, dtype=Float, device=device)
+        out_origin = torch.tensor(out_origin, dtype=Float, device=device)
+        valid = torch.tensor(valid, dtype=bool, device=device)
+        mask = torch.tensor(mask, dtype=Float, device=device)
+        origin = torch.tensor(origin, dtype=Float, device=device)
+        ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
+        R_inverse = torch.tensor(R_inverse, dtype=Float, device=device)
+        K_inverse = torch.tensor(K_inverse, dtype=Float, device=device)
+        R = torch.tensor(R, dtype=Float, device=device)
+        K = torch.tensor(K, dtype=Float, device=device)
+        camera_M = (R, K, R_inverse, K_inverse)
+        return out_dir, out_origin, valid, mask, origin, ray_dir, camera_M
+
+    scene = Render.Scene(f"/root/workspace/data/{name}_vh.ply")
+    # scene = Render.Scene(f"/root/workspace/DR/result/{name}_sm.ply")
     # scene = Render.Scene(f"/root/workspace/DR/result/{name}_pixel.ply")
     # torch.autograd.set_detect_anomaly(True)
 
-    #smooth pass
+    def rand_generator(num=72):
+        head_view = {
+            'mouse': 16,
+            'rabbit': 18,
+            'hand': 18,
+            'dog': 17,
+            'monkey': 19,
+        }
+        # if name in head_view.keys():
+        #     view_range = HyperParams['view_range']
+        #     head_num = head_view[name]
+        #     index = list(np.arange(head_num-18-view_range, head_num+1-18+view_range))
+        #     index = index + list(np.arange(head_num+18-view_range, head_num+1+18+view_range))  
+        # else:
+        #     index = list(np.arange(num))
 
-    for i in range(HyperParams['Pass']):
-        remesh_len = interp_R(HyperParams['start_len'], HyperParams['end_len'], i, HyperParams['Pass'])
-        # remesh_len = interp_L(HyperParams['start_len'], HyperParams['end_len'], i, HyperParams['Pass'])
-        # lr = interp_L(HyperParams['start_lr'], HyperParams['lr_decay'] * HyperParams['start_lr'], i, HyperParams['Pass'])
-        lr = interp_R(HyperParams['start_lr'], HyperParams['lr_decay'] * HyperParams['start_lr'], i, HyperParams['Pass'])
+        #mouse debug
+        index = list(np.arange(-5, 10))
+        index = index + list(np.arange(22,40))
+        # index = list(np.arange(72))
+
+        while True:
+            # index = list(np.arange(-5, 10))#mouse
+            # index = index + list(np.arange(22,40))
+            np.random.shuffle(index)
+            for i in index: yield i % 72
+
+    view  = rand_generator(len(Views))
+
+    for i_pass in range(HyperParams['Pass']):
+        remesh_len = interp_R(HyperParams['start_len'], HyperParams['end_len'], i_pass, HyperParams['Pass'])
+        # remesh_len = interp_L(HyperParams['start_len'], HyperParams['end_len'], i_pass, HyperParams['Pass'])
+        # lr = interp_L(HyperParams['start_lr'], HyperParams['lr_decay'] * HyperParams['start_lr'], i_pass, HyperParams['Pass'])
+        lr = interp_R(HyperParams['start_lr'], HyperParams['lr_decay'] * HyperParams['start_lr'], i_pass, HyperParams['Pass'])
         
         remesh(scene, Render.meshlab_remesh_srcipt.format(remesh_len))
         init_vertices, parameter, opt = setup_opt(scene, lr, HyperParams)
 
         print(f'remesh_len {remesh_len} lr {lr}')
 
-        def rand_generator(num=72):
-            while True:
-                # index = list(np.arange(num))
-                index = list(np.arange(-5, 10))
-                index = index + list(np.arange(22,40))
-                np.random.shuffle(index)
-                for i in index: yield i
-        view  = rand_generator(len(Views))
+
         for it in range(HyperParams['Iters']):
+            # if it % 100 == 0:
+            #     save_illustration()
             # if track and it%200 == 0:
             #     track.log(mean_hausd=mean_hausd(scene))
             V_index = next(view)
-            out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = Views[V_index]
-            R, K, R_inverse, K_inverse = camera_M
-            out_dir = torch.tensor(out_dir, dtype=Float, device=device)
-            out_origin = torch.tensor(out_origin, dtype=Float, device=device)
-            valid = torch.tensor(valid, dtype=bool, device=device)
-            mask = torch.tensor(mask, dtype=Float, device=device)
-            origin = torch.tensor(origin, dtype=Float, device=device)
-            ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
-            R_inverse = torch.tensor(R_inverse, dtype=Float, device=device)
-            K_inverse = torch.tensor(K_inverse, dtype=Float, device=device)
-            R = torch.tensor(R, dtype=Float, device=device)
-            K = torch.tensor(K, dtype=Float, device=device)
-            camera_M = (R, K, R_inverse, K_inverse)
+            out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(V_index)
             # target = out_dir
             target = out_origin
 
@@ -259,15 +309,16 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
             if torch.isnan(vertices).any():
                 print("nan in vertices")
 
+            zeroloss = torch.tensor(0, device=device)
             ray_loss = HyperParams['ray_w'] * cal_ray_loss(scene, out_origin, out_dir, origin, ray_dir, target, valid)\
-                if HyperParams['ray_w'] !=0 else 0
+                if HyperParams['ray_w'] !=0 else zeroloss
             vh_loss = HyperParams['vh_w'] * cal_vh_loss(Views, V_index, scene)\
-                if HyperParams['vh_w'] !=0 else 0
-            var_loss = HyperParams['var_w'] * cal_var_loss(scene, Render)\
-                if HyperParams['var_w'] !=0 else 0
-            sm_loss = HyperParams['sm_w'] * cal_sm_loss(scene, HyperParams)\
-                if HyperParams['sm_w'] !=0 else 0
-            bound_loss = 0
+                if HyperParams['vh_w'] !=0 else zeroloss
+            var_loss = HyperParams['var_w'] * cal_var_loss(scene)\
+                if HyperParams['var_w'] !=0 else zeroloss
+            sm_loss = HyperParams['sm_w'] * cal_sm_loss(scene)\
+                if HyperParams['sm_w'] !=0 else zeroloss
+            bound_loss = zeroloss
             # bound_loss = 1e0 * torch.nn.functional.relu(Render.dot(parameter/scene.mean_len, scene.normals)).pow(2).mean()
 
             LOSS = 10*(ray_loss + vh_loss + var_loss + sm_loss+ bound_loss)
@@ -277,6 +328,13 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
 
             if track:
                 track.log(ray_loss=ray_loss.item(), sm_loss=sm_loss.item(), LOSS=LOSS.item()/10)
+
+            # if i_pass == 0:
+            #     if it % 10 == 0:
+            #         scene.mesh.export(f'/root/workspace/show/mouse/tmp_{i_pass}_{it}.obj')
+            # else:
+            #     if it % 100 == 0:
+            #         scene.mesh.export(f'/root/workspace/show/mouse/tmp_{i_pass}_{it}.obj')
 
             if it%100==0 and output:
                 print('Iteration %03i: ray=%g bound=%g vh=%g var=%g sm=%g  grad=%g' % \
@@ -296,7 +354,11 @@ def optimize(name, HyperParams, cuda_num = 0, output=True, track=None):
     return scene
 
 if __name__ == "__main__":
+    name = 'mouse'
+
+
     HyperParams = { 
+        'name' :  name,
         'IOR' : 1.4723,
         'Pass' : 8,
         # 'Pass' : 2,
@@ -310,30 +372,28 @@ if __name__ == "__main__":
         "sm_w": 10e0,
         # "sm_w": 2e1, #mouse
         # "sm_w": 2e2, #fairing
-        # "vh_w": 0.1,
-        "vh_w": 0.03,
+        "vh_w": 0.1,
         # "sm_method": "laplac",
         # "sm_method": "fairing",
         "sm_method": "dihedral",
         "optimizer": "sgd",
         # "optimizer": "adam",
         "momentum": 0.95,
-        # "start_lr": 0.1,
         "start_lr": 0.1,
-        # "lr_decay": 0.1,
-        "lr_decay": 1,
+        "lr_decay": 0.1,
+        # "lr_decay": 1,
         "taubin" : 0,
         "start_len": 10,
-        # "start_len": 3,
+        'view_range' : 12,
+        # 'view_range' : 17,
 
-        # "start_len": 1,
-        # "end_len": 1, #search ior
-
-        # "end_len": 2, #fairing
         "end_len": 1,
                     }
-    name = 'mouse'
-    scene = optimize(name, HyperParams)
+
+ 
+    scene = optimize(HyperParams)
+    # scene = optimize(sm_Params)
+    # _ = scene.mesh.export(f"/root/workspace/DR/result/{name}_sm.ply")
     _ = scene.mesh.export(f"/root/workspace/DR/result/{name}_pixel.ply")
     # _ = scene.mesh.export(f"/root/workspace/DR/result/{name}_IOR.ply")
     # _ = scene.mesh.export(f"/root/workspace/DR/result/{name}_fair.ply")
