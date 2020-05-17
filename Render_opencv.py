@@ -233,7 +233,7 @@ class primary_edge_sample(torch.autograd.Function):
         Ny = bx-ax # (bx - ax)y
         N = torch.stack((Nx,Ny), dim=1) #[nx2]
         normalized_N = N / N.norm(dim=1, keepdim=True)
-        length = ( E_pos[:,0]-E_pos[:,1] ).norm(dim=1)
+        # length = ( E_pos[:,0]-E_pos[:,1] ).norm(dim=1)
         eps = 1
         fu_point = sample_point + eps*normalized_N #[nx2]
         fl_point = sample_point - eps*normalized_N #[nx2]
@@ -251,15 +251,20 @@ class primary_edge_sample(torch.autograd.Function):
         mask[hitted] = 1
         f = mask[:num] - mask[num:]
 
-        denominator = torch.sqrt(N.pow(2).sum(dim=1))
-        dax = by - y
-        dbx = y - ay
-        day = x - bx
-        dby = ax - x
+        # denominator = torch.sqrt(N.pow(2).sum(dim=1))
+        # dax = by - y
+        # dbx = y - ay
+        # day = x - bx
+        # dby = ax - x
+        # dax = dbx = -Nx / resy
+        # day = dby = -Ny / resy
+        dax = dbx = -Nx
+        day = dby = -Ny
         dx = torch.stack((dax,dbx),dim=1)
         dy = torch.stack((day,dby),dim=1)
         dE_pos = torch.stack((dx,dy),dim=2) #[nx2x2]
-        dE_pos = dE_pos * (length * f / denominator).view(-1,1,1) #[n] --> [nx1x1]
+        # dE_pos = dE_pos * (length * f / denominator).view(-1,1,1) #[n] --> [nx1x1]
+        dE_pos = dE_pos * f.view(-1,1,1) #[n] --> [nx1x1]
   
         valid_edge = f.abs() > 1e-5
         index = sample_point[valid_edge].to(torch.long)
@@ -269,9 +274,10 @@ class primary_edge_sample(torch.autograd.Function):
         # index = fu_point[valid_edge].to(torch.long)
 
         output = 0.5 * torch.ones(len(index), device=device)
+        # output = 0.2 * torch.ones(len(index), device=device)
 
         ctx.mark_non_differentiable(index)
-        ctx.save_for_backward(dE_pos/resy, valid_edge)
+        ctx.save_for_backward(dE_pos, valid_edge)
 
 
         return index, output
@@ -282,6 +288,7 @@ class primary_edge_sample(torch.autograd.Function):
     def backward(ctx, grad_index, grad_output):
         dE_pos, valid_edge = ctx.saved_variables
         dE_pos[valid_edge] *= grad_output.view(-1,1,1)
+        # print(grad_output)
         return dE_pos, None, None, None, None
 
 

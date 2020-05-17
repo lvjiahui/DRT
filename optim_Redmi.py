@@ -7,10 +7,27 @@ import h5py
 from tqdm import trange
 import meshlabxml as mlx
 
-resy=960
-resx=1280
+resy=1080
+resx=1920
 Float = torch.float64
 device='cuda'
+
+def generate_ray(K_inverse, R_inverse):
+    y_range = torch.arange(0, resy, device=device, dtype=Float)
+    x_range = torch.arange(0, resx, device=device, dtype=Float)
+    pixely, pixelx = torch.meshgrid(y_range, x_range)
+    pixelz = torch.ones_like(pixely)
+    pixel = torch.stack([pixelx, pixely, pixelz], dim=2).view([-1,3])
+    pixel_p = K_inverse @ pixel.T
+    
+    pixel_world_p  = R_inverse[:3,:3] @ pixel_p + R_inverse[:3, 3:4]
+    ray_origin = R_inverse[:3, 3:4] #[3x1]
+    ray_dir = pixel_world_p - ray_origin
+    ray_dir = ray_dir.T #[nx3]
+    ray_dir = ray_dir/ray_dir.norm(dim=1,keepdim=True)
+    ray_origin = ray_origin.T.expand_as(ray_dir)
+    return ray_origin, ray_dir
+
 
 
 def limit_hook(grad):
@@ -92,17 +109,7 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
         vh_loss = 0
         for v in np.arange(0,72,9):
             index =  (V_index+v)%72
-            out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = Views[index]
-        # for view in Views:
-        #     out_dir, valid, mask, origin, ray_dir, camera_M = view
-            R, K, R_inverse, K_inverse = camera_M
-            origin = torch.tensor(origin[0], dtype=Float, device=device)
-            mask = torch.tensor(mask, dtype=Float, device=device)
-            R_inverse = torch.tensor(R_inverse, dtype=Float, device=device)
-            K_inverse = torch.tensor(K_inverse, dtype=Float, device=device)
-            R = torch.tensor(R, dtype=Float, device=device)
-            K = torch.tensor(K, dtype=Float, device=device)
-            camera_M = (R, K, R_inverse, K_inverse)
+            origin = get_origin_torch(index) #[3]
             silhouette_edge = scene.silhouette_edge(origin)
             index, output = scene.primary_visibility(silhouette_edge, camera_M, origin, detach_depth=True)
             vh_loss += (mask.view((resy,resx))[index[:,1],index[:,0]] - output).abs().sum()
@@ -141,7 +148,7 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
 
         return sm_loss
 
-    def cal_ray_loss(scene, out_origin, out_dir, origin, ray_dir, target, valid):
+    def cal_ray_loss(scene, out_origin, origin, ray_dir, target, valid):
         # with torch.no_grad():
         #     _, reverse_mask = scene.render_transparent(out_origin, -out_dir)
         render_out_ori, render_out_dir, render_mask = scene.render_transparent(origin, ray_dir)
@@ -163,7 +170,7 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
         return ray_loss
 
     def save_illustration():
-        out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(36)
+        out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(36)
         target = out_origin
         render_out_ori, render_out_dir, render_mask = scene.render_transparent(origin, ray_dir)
         target = target  - render_out_ori.detach()
@@ -202,72 +209,70 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
     if output : viewnum = trange(72)
     else : viewnum = range(72)
     for i in viewnum:
-    # for i in trange(0,72,9):
-        out_dir = h5data['ray'][i,:,-3:]
-        # out_origin = h5data['ray'][i,:,-6:-3]
-        out_origin = h5data['cleaned_position'][i,:]
-        mask = h5data['mask'][i][:,:,0]
-        origin = h5data['ray'][i,:,:3]
-        ray_dir = h5data['ray'][i,:,3:6]
-        R_inverse = h5data['cam_proj'][i]
+        out_origin = h5data['cleaned_position'][i,:].reshape([-1,3])
+        mask = h5data['mask'][i]
+        R = h5data['cam_proj'][i]
         K = h5data['cam_k'][:]
-        R = np.linalg.inv(R_inverse)
+        R_inverse = np.linalg.inv(R)
         K_inverse = np.linalg.inv(K)
-        mask = mask//255
-        # valid = (cal_valid_mask(out_origin.reshape((resy,resx,3))) * mask).reshape(-1)
-        valid = out_origin[:,0] != 0
+
+        if mask.max() == 255: mask //= 255
+        assert mask.max() == 1
         M = mask
-        if M.max() == 255: M //= 255
-        assert M.max() == 1
-        bound = 2
+        bound = 4
         dist= (cv2.distanceTransform(M, cv2.DIST_L2, 0)-0).clip(0,bound)\
          - (cv2.distanceTransform(1-M, cv2.DIST_L2, 0)-1).clip(0,bound) #[-bound,+bound]
         mask = (dist + bound) / (2*bound) #[0,1]
+        mask[-1] = 0.5
 
-        camera_M = (R, K, R_inverse, K_inverse)
-        Views.append((out_dir, out_origin, valid, mask, origin, ray_dir, camera_M))
-
-    def get_view_torch(V_index):
-        out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = Views[V_index]
-        R, K, R_inverse, K_inverse = camera_M
-        out_dir = torch.tensor(out_dir, dtype=Float, device=device)
         out_origin = torch.tensor(out_origin, dtype=Float, device=device)
-        valid = torch.tensor(valid, dtype=bool, device=device)
         mask = torch.tensor(mask, dtype=Float, device=device)
-        origin = torch.tensor(origin, dtype=Float, device=device)
-        ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
-        R_inverse = torch.tensor(R_inverse, dtype=Float, device=device)
-        K_inverse = torch.tensor(K_inverse, dtype=Float, device=device)
         R = torch.tensor(R, dtype=Float, device=device)
         K = torch.tensor(K, dtype=Float, device=device)
+        R_inverse = torch.tensor(R_inverse, dtype=Float, device=device)
+        K_inverse = torch.tensor(K_inverse, dtype=Float, device=device)
+        valid = out_origin[:,0] != 0
         camera_M = (R, K, R_inverse, K_inverse)
-        return out_dir, out_origin, valid, mask, origin, ray_dir, camera_M
 
+        Views.append((out_origin, valid, mask, camera_M))
+
+    def get_view_torch(V_index):
+        out_origin, valid, mask, camera_M = Views[V_index]
+        R, K, R_inverse, K_inverse = camera_M
+
+        origin, ray_dir = generate_ray(K_inverse, R_inverse)
+
+        ####################################################
+        #exchange  R_inverse and R name 
+        # camera_M = (R, K, R_inverse, K_inverse)
+        camera_M = (R_inverse, K, R, K_inverse)
+        ######################################################
+        return out_origin, valid, mask, origin, ray_dir, camera_M
+
+    def get_origin_torch(V_index):
+        out_origin, valid, mask, camera_M = Views[V_index]
+        R, K, R_inverse, K_inverse = camera_M
+        R_inverse = R_inverse.to(device)
+        ray_origin = R_inverse[:3,3] #[3]
+        return ray_origin
+        
     scene = Render.Scene(f"/root/workspace/data/{name}_vh.ply")
-    # scene = Render.Scene(f"/root/workspace/data/{name}_vh_sim.ply")
     # scene = Render.Scene(f"/root/workspace/DR/result/{name}_sm.ply")
     # scene = Render.Scene(f"/root/workspace/DR/result/{name}_pixel.ply")
     # torch.autograd.set_detect_anomaly(True)
 
     def rand_generator(num=72):
         head_view = {
-            'mouse': 16,
-            'rabbit': 18,
-            'hand': 18,
-            'dog': 17,
-            'monkey': 19,
+            'rabbit_new': 17,
         }
-                # if name in head_view.keys():
-        #     view_range = HyperParams['view_range']
-        #     head_num = head_view[name]
-        #     index = list(np.arange(head_num-18-view_range, head_num+1-18+view_range))
-        #     index = index + list(np.arange(head_num+18-view_range, head_num+1+18+view_range))  
-        # else:
-        #     index = list(np.arange(num))
 
-        #mouse debug
-        index = list(np.arange(-5, 10))
-        index = index + list(np.arange(22,40))
+        if name in head_view.keys():
+            view_range = HyperParams['view_range']
+            head_num = head_view[name]
+            index = list(np.arange(head_num-18-view_range, head_num+1-18+view_range))
+            index = index + list(np.arange(head_num+18-view_range, head_num+1+18+view_range))  
+        else:
+            index = list(np.arange(num))
         # index = list(np.arange(72))
 
         while True:
@@ -291,11 +296,10 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
         for it in range(HyperParams['Iters']):
             # if it % 100 == 0:
             #     save_illustration()
-            if track and it%200 == 0:
-                track.log(mean_hausd=mean_hausd(scene))
+            # if track and it%200 == 0:
+            #     track.log(mean_hausd=mean_hausd(scene))
             V_index = next(view)
-            out_dir, out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(V_index)
-            # target = out_dir
+            out_origin, valid, mask, origin, ray_dir, camera_M = get_view_torch(V_index)
             target = out_origin
 
 
@@ -310,7 +314,7 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
                 print("nan in vertices")
 
             zeroloss = torch.tensor(0, device=device)
-            ray_loss = HyperParams['ray_w'] * cal_ray_loss(scene, out_origin, out_dir, origin, ray_dir, target, valid)\
+            ray_loss = HyperParams['ray_w'] * cal_ray_loss(scene, out_origin, origin, ray_dir, target, valid)\
                 if HyperParams['ray_w'] !=0 else zeroloss
             vh_loss = HyperParams['vh_w'] * cal_vh_loss(Views, V_index, scene)\
                 if HyperParams['vh_w'] !=0 else zeroloss
@@ -354,7 +358,8 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
     return scene
 
 if __name__ == "__main__":
-    name = 'mouse'
+    # name = 'horse'
+    name = 'rabbit_new'
 
 
     HyperParams = { 
@@ -383,7 +388,7 @@ if __name__ == "__main__":
         "lr_decay": 0.5,
         # "lr_decay": 1,
         "taubin" : 0,
-        "start_len": 10,
+        "start_len": 5,
         'view_range' : 12,
         # 'view_range' : 17,
 
