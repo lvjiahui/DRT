@@ -15,7 +15,6 @@ import imageio
 import random
 from PIL import Image
 
-
 meshlab_remesh_srcipt = """
 <!DOCTYPE FilterScript>
 <FilterScript>
@@ -35,6 +34,8 @@ meshlab_remesh_srcipt = """
  </filter>
 </FilterScript>
 """
+
+
 
 
 debug = False
@@ -497,7 +498,6 @@ class Scene:
         triangles = self.vertices[faces]
         normals = self.normals[faces]
         return JIT_Dintersect(origin, ray_dir, hitted, triangles, normals)
-
 
     def trace2(self, origin, ray_dir, depth=1, santy_check=False):
         def debug_cos():
