@@ -269,11 +269,8 @@ def optimize(HyperParams, cuda_num = 0, output=True, track=None):
 
         origin, ray_dir = generate_ray(K_inverse, R_inverse)
 
-        ####################################################
-        #exchange  R_inverse and R name 
-        # camera_M = (R, K, R_inverse, K_inverse)
-        camera_M = (R_inverse, K, R, K_inverse)
-        ######################################################
+        camera_M = (R, K, R_inverse, K_inverse)
+        
         return out_ray_dir, valid, mask, origin, ray_dir, camera_M
 
     def get_origin_torch(V_index):

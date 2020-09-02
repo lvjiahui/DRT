@@ -15,25 +15,7 @@ import imageio
 import random
 from PIL import Image
 
-meshlab_remesh_srcipt = """
-<!DOCTYPE FilterScript>
-<FilterScript>
- <filter name="Remeshing: Isotropic Explicit Remeshing">
-  <Param value="3" isxmlparam="0" name="Iterations" type="RichInt" description="Iterations" tooltip="Number of iterations of the remeshing operations to repeat on the mesh."/>
-  <Param value="false" isxmlparam="0" name="Adaptive" type="RichBool" description="Adaptive remeshing" tooltip="Toggles adaptive isotropic remeshing."/>
-  <Param value="false" isxmlparam="0" name="SelectedOnly" type="RichBool" description="Remesh only selected faces" tooltip="If checked the remeshing operations will be applied only to the selected faces."/>
-  <Param value="{}" isxmlparam="0" name="TargetLen" type="RichAbsPerc" description="Target Length" min="0" max="214.384" tooltip="Sets the target length for the remeshed mesh edges."/>
-  <Param value="180" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
-  <Param value="true" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
-  <Param value="1" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
-  <Param value="true" isxmlparam="0" name="SplitFlag" type="RichBool" description="Refine Step" tooltip="If checked the remeshing operations will include a refine step."/>
-  <Param value="true" isxmlparam="0" name="CollapseFlag" type="RichBool" description="Collapse Step" tooltip="If checked the remeshing operations will include a collapse step."/>
-  <Param value="true" isxmlparam="0" name="SwapFlag" type="RichBool" description="Edge-Swap Step" tooltip="If checked the remeshing operations will include a edge-swap step, aimed at improving the vertex valence of the resulting mesh."/>
-  <Param value="true" isxmlparam="0" name="SmoothFlag" type="RichBool" description="Smooth Step" tooltip="If checked the remeshing operations will include a smoothing step, aimed at relaxing the vertex positions in a Laplacian sense."/>
-  <Param value="true" isxmlparam="0" name="ReprojectFlag" type="RichBool" description="Reproject Step" tooltip="If checked the remeshing operations will include a step to reproject the mesh vertices on the original surface."/>
- </filter>
-</FilterScript>
-"""
+
 
 
 
@@ -243,7 +225,7 @@ class primary_edge_sample(torch.autograd.Function):
         W = torch.ones([1, f_point.shape[1]], dtype=Float, device=device)
         camera_p = K_inverse @ torch.cat([f_point, W], dim=0) # pixel at z=1
         camera_p = torch.cat([camera_p, W], dim=0)
-        world_p = R_inverse @ camera_p #[4x2n]
+        world_p = R @ camera_p #[4x2n]
         world_p = world_p[:3].T #[2nx3]
         ray_dir = world_p - ray_origin.view(-1,3)
         ray_origin = ray_origin.expand_as(ray_dir)
@@ -320,6 +302,7 @@ class Intersection:
         
     def __len__(self):
         return len(self.ray)
+        
 class Scene:
     def __init__(self, mesh_path, cuda_device = 0):
         self.optix_mesh = optix.optix_mesh(cuda_device)
@@ -496,8 +479,8 @@ class Scene:
 
         V = self.vertices[silhouette_edge.view(-1)] #[2Nx3]
         W = torch.ones([V.shape[0],1], dtype=Float, device=device)
-        v_hemo = torch.cat([V, W], dim=1) #[2Nx4]
-        v_camera =  R @ v_hemo.T #[4x2N]
+        hemo_v = torch.cat([V, W], dim=1) #[2Nx4]
+        v_camera =  R_inverse @ hemo_v.T #[4x2N]
         if detach_depth: 
             v_camera[2:3] = v_camera[2:3].detach()
         v_camera = K @ v_camera[:3] #[3x2N]
@@ -513,15 +496,14 @@ class Scene:
         R, K, R_inverse, K_inverse = camera_M
 
         W = torch.ones([V.shape[0],1], dtype=Float, device=device)
-        v_hemo = torch.cat([V, W], dim=1) #[Nx4]
-        v_camera = R @ v_hemo.T #[3xN]
+        hemo_v = torch.cat([V, W], dim=1) #[Nx4]
+        v_camera = R_inverse @ hemo_v.T #[3xN]
         v_camera = K @ v_camera[:3]
         pixel_index = v_camera[:2] / v_camera[2]
         pixel_index = pixel_index.to(torch.long).T
         return pixel_index
 
     def Dintersect(self, ray: Ray):
-        # hitted, faces = self.optix_intersect(origin, ray_dir)
         faces_ind, hitted = self.optix_intersect(ray)
         faces = self.faces[faces_ind[hitted]]
         triangles = self.vertices[faces]
@@ -566,7 +548,7 @@ class Scene:
         return refracted, new_ray
 
 
-    def trace2(self, ray: Ray):
+    def trace2(self, ray: Ray, depth=1, santy_check=False):
         intersect, hitted = self.Dintersect(ray)
         refracted, new_ray = self.refract_ray(intersect)
         new_ray = new_ray.select(refracted)
