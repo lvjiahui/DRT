@@ -1,4 +1,9 @@
 __pycache__
+.vscode
 data
 result
-trimesh
+# demo
+*.ipynb
+*.png
+*.ply
+*.pdf
