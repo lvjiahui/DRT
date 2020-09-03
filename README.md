@@ -1,7 +1,7 @@
 # DRT
 Implementation of [Differentiable Refraction-Tracing for Mesh Reconstruction of Transparent Objects.](https://vcc.tech/research.html)(TODO : update link)
 
-### (Teaser place holder)
+![overview](./doc/lod.png)
 
 ## Dependencies
 Requirements:
@@ -9,7 +9,12 @@ Requirements:
 - [Meshlab](https://www.meshlab.net/): We use meshlabserver to remesh and calculate average per-vertex distance (Hausdorff Distance). Note that meshlab older than 2020.03 may not support remesh operation.
 - Python with pytorch, numpy, trimesh, pycuda and imageio.
 
+## Captured data
+Our example data is captured by graypoint camera or cellphone Redmi and released [here]().
+
 ## Usage
-- First, set Optix-SDK and meshlabserver path in DiffRender.py
+- Download our captured data, Optix-SDK and meshlabserver.
+- Set corresponding path in config.py.
+- python optim.py.
 
 ### (To be updated)

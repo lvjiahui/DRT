@@ -4,6 +4,7 @@ import cv2
 import h5py
 from tqdm import trange
 import imageio
+import config
 
 Float = torch.float64
 device='cuda'
@@ -43,15 +44,6 @@ def generate_ray(resy, resx, K_inverse, R_inverse):
     ray_origin = ray_origin.T.expand_as(ray_dir)
     return ray_origin, ray_dir
 
-def synthetic_data(Target_scene, resy, resx, K_inverse, R_inverse):
-
-    ray_origin, ray_dir = generate_ray(resy, resx, K_inverse, R_inverse)
-    _, out_ray_dir, valid = Target_scene.render_transparent(ray_origin, ray_dir)
-    target = out_ray_dir
-    valid = valid[:,0]
-    mask = Target_scene.render_mask(ray_origin, ray_dir)
-    mask = mask.reshape([resy, resx]).cpu().numpy().astype(np.uint8)
-    return ray_origin, ray_dir, target, valid, mask
 
 class Data:
     def get_view(self, V_index):
@@ -111,12 +103,15 @@ class Data:
 
 
 class Data_Graypoint(Data):
-    def __init__(self, HyperParams, syn_scene=None):
+    '''
+    data captured by graypoint camera
+    '''
+    def __init__(self, HyperParams):
         self.resy=960
         self.resx=1280
         self.num_view = HyperParams['num_view']
         self.name = HyperParams['name']
-        h5data = h5py.File(f'/root/workspace/data/{self.name}.h5','r')
+        h5data = h5py.File(f'{config.data_path}{self.name}.h5','r')
 
         self.Views = []
         for i in trange(72):
@@ -127,15 +122,14 @@ class Data_Graypoint(Data):
             R = h5data['cam_proj'][i]
             R_inverse = np.linalg.inv(R)
             K_inverse = np.linalg.inv(K)
-            if not HyperParams['synthetic']:
-                screen_pixel = h5data['cleaned_position'][i,:]
-                target = screen_pixel
-                mask = h5data['mask'][i][:,:,0]
-                ray_origin = h5data['ray'][i,:,:3]
-                ray_dir = h5data['ray'][i,:,3:6]
-                valid = screen_pixel[:,0] != 0
-            else:
-                ray_origin, ray_dir, target, valid, mask = synthetic_data(syn_scene, self.resy, self.resx, K_inverse, R_inverse)
+
+            screen_pixel = h5data['cleaned_position'][i,:]
+            target = screen_pixel
+            mask = h5data['mask'][i][:,:,0]
+            ray_origin = h5data['ray'][i,:,:3]
+            ray_dir = h5data['ray'][i,:,3:6]
+            valid = screen_pixel[:,0] != 0
+
             mask = process_mask(mask)
 
             target          = torch.tensor(target       , dtype = Float).pin_memory()
@@ -153,15 +147,16 @@ class Data_Graypoint(Data):
 
 
 class Data_Redmi(Data):
-    def __init__(self, HyperParams, syn_scene=None):
+    '''
+    data captured by my cellphone Redmi
+    '''
+    def __init__(self, HyperParams):
         self.resy=1080
         self.resx=1920
         self.num_view = HyperParams['num_view']
         self.name = HyperParams['name']
-        if self.name == 'cup': 
-            self.resy = 1200
-            print('cup')
-        h5data = h5py.File(f'/root/workspace/data/{self.name}.h5','r')
+
+        h5data = h5py.File(f'{config.data_path}{self.name}.h5','r')
         self.Views = []
 
         for i in trange(72):
@@ -170,14 +165,11 @@ class Data_Redmi(Data):
             R_inverse = np.linalg.inv(R)
             K_inverse = np.linalg.inv(K)
 
-            if not HyperParams['synthetic']:
-                screen_pixel = h5data['cleaned_position'][i,:].reshape([-1,3])
-                target = screen_pixel
-                mask = h5data['mask'][i]
-                valid = screen_pixel[:,0] != 0
-                ray_origin, ray_dir = generate_ray(self.resy, self.resx, K_inverse, R_inverse)
-            else:
-                ray_origin, ray_dir, target, valid, mask = synthetic_data(syn_scene, self.resy, self.resx, K_inverse, R_inverse)
+            screen_pixel = h5data['cleaned_position'][i,:].reshape([-1,3])
+            target = screen_pixel
+            mask = h5data['mask'][i]
+            valid = screen_pixel[:,0] != 0
+            ray_origin, ray_dir = generate_ray(self.resy, self.resx, K_inverse, R_inverse)
 
             mask = process_mask(mask)
 

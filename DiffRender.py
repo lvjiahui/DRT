@@ -1,40 +1,14 @@
 
 import torch
 from torch.utils.cpp_extension import load
-optix_include = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/include"
-optix_ld = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/lib64"
-
-optix = load(name="optix", sources=["/root/workspace/DR/optix_extend.cpp"],
+from config import optix_include, optix_ld
+optix = load(name="optix", sources=["./optix_extend.cpp"],
     extra_include_paths=[optix_include], extra_ldflags=["-L"+optix_ld, "-loptix_prime"])
 
 import trimesh
-import trimesh.transformations as TF
-import kornia
 import numpy as np
 import imageio
-import random
 from PIL import Image
-
-meshlab_remesh_srcipt = """
-<!DOCTYPE FilterScript>
-<FilterScript>
- <filter name="Remeshing: Isotropic Explicit Remeshing">
-  <Param value="3" isxmlparam="0" name="Iterations" type="RichInt" description="Iterations" tooltip="Number of iterations of the remeshing operations to repeat on the mesh."/>
-  <Param value="false" isxmlparam="0" name="Adaptive" type="RichBool" description="Adaptive remeshing" tooltip="Toggles adaptive isotropic remeshing."/>
-  <Param value="false" isxmlparam="0" name="SelectedOnly" type="RichBool" description="Remesh only selected faces" tooltip="If checked the remeshing operations will be applied only to the selected faces."/>
-  <Param value="{}" isxmlparam="0" name="TargetLen" type="RichAbsPerc" description="Target Length" min="0" max="214.384" tooltip="Sets the target length for the remeshed mesh edges."/>
-  <Param value="180" isxmlparam="0" name="FeatureDeg" type="RichFloat" description="Crease Angle" tooltip="Minimum angle between faces of the original to consider the shared edge as a feature to be preserved."/>
-  <Param value="true" isxmlparam="0" name="CheckSurfDist" type="RichBool" description="Check Surface Distance" tooltip="If toggled each local operation must deviate from original mesh by [Max. surface distance]"/>
-  <Param value="1" isxmlparam="0" name="MaxSurfDist" type="RichAbsPerc" description="Max. Surface Distance" min="0" max="214.384" tooltip="Maximal surface deviation allowed for each local operation"/>
-  <Param value="true" isxmlparam="0" name="SplitFlag" type="RichBool" description="Refine Step" tooltip="If checked the remeshing operations will include a refine step."/>
-  <Param value="true" isxmlparam="0" name="CollapseFlag" type="RichBool" description="Collapse Step" tooltip="If checked the remeshing operations will include a collapse step."/>
-  <Param value="true" isxmlparam="0" name="SwapFlag" type="RichBool" description="Edge-Swap Step" tooltip="If checked the remeshing operations will include a edge-swap step, aimed at improving the vertex valence of the resulting mesh."/>
-  <Param value="true" isxmlparam="0" name="SmoothFlag" type="RichBool" description="Smooth Step" tooltip="If checked the remeshing operations will include a smoothing step, aimed at relaxing the vertex positions in a Laplacian sense."/>
-  <Param value="true" isxmlparam="0" name="ReprojectFlag" type="RichBool" description="Reproject Step" tooltip="If checked the remeshing operations will include a step to reproject the mesh vertices on the original surface."/>
- </filter>
-</FilterScript>
-"""
-
 
 
 
@@ -320,6 +294,7 @@ class Intersection:
         
     def __len__(self):
         return len(self.ray)
+
 class Scene:
     def __init__(self, mesh_path, cuda_device = 0):
         self.optix_mesh = optix.optix_mesh(cuda_device)
@@ -340,7 +315,6 @@ class Scene:
         self.init_VN()
         self.init_weightM()
         self.init_edge()
-
 
     def init_VN(self):
         faces = self.faces.detach()
@@ -380,8 +354,6 @@ class Scene:
         self.Edges = Edges
         self.E2F = E2F
 
-
-
     def init_weightM(self):
         '''
         # Calculate a sparse matrix for laplacian operations
@@ -411,8 +383,6 @@ class Scene:
         self.triangles = vertices[self.faces] #[Fx3x3]
         self.init_VN()
 
-
-
     def optix_intersect(self, ray:Ray):
         optix_o = ray.origin.to(torch.float32).to(device)
         optix_d = ray.direction.to(torch.float32).to(device)
@@ -420,7 +390,6 @@ class Scene:
         T, faces_ind = self.optix_mesh.intersect(optix_ray)
         hitted = T>0 
         return faces_ind.to(torch.long), hitted       
-
 
     def edge_var(self):
         return JIT_edge_var(self.vertices, self.Edges)
@@ -565,7 +534,6 @@ class Scene:
 
         return refracted, new_ray
 
-
     def trace2(self, ray: Ray):
         intersect, hitted = self.Dintersect(ray)
         refracted, new_ray = self.refract_ray(intersect)
@@ -590,18 +558,3 @@ def torch2pil(img:torch.Tensor):
     if image.shape[2] == 1: image = image[:,:,0]
     return Image.fromarray(image)
 
-
-if __name__ ==  '__main__':
-    import h5py
-    scene =  Scene("/root/workspace/DR/result/mouse_sm.ply")
-    h5data = h5py.File('/root/workspace/data/mouse.h5','r')
-    origin = h5data['ray'][0,:,:3]
-    ray_dir = h5data['ray'][0,:,3:6]
-    origin = torch.tensor(origin, dtype=Float, device=device)
-    ray_dir = torch.tensor(ray_dir, dtype=Float, device=device)
-    image = torch.zeros(ray_dir.shape, dtype=Float, device=device)
-    ray = Ray(origin, ray_dir)
-    del ray_dir, origin
-    valid_ray = scene.trace2(ray)
-    image[valid_ray.ray_ind] = valid_ray.direction
-    save_torch('/root/workspace/DR/result/santy_check_refactor.png', image)
