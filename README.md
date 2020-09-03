@@ -12,9 +12,11 @@ Requirements:
 ## Captured data
 Our example data is captured by graypoint camera or cellphone Redmi and released [here]().
 
+<img src="./doc/setup.jpg" width="500">
+
 ## Usage
 - Download our captured data, Optix-SDK and meshlabserver.
-- Set corresponding path in config.py.
-- python optim.py.
+- Set corresponding paths in `config.py`.
+- run `python optim.py`
 
 ### (To be updated)
