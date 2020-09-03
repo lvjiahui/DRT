@@ -1,8 +1,7 @@
 __pycache__
 .vscode
-data
+# data
+*.h5
 result
-# demo
+demo
 *.ipynb
-*.ply
-*.pdf
