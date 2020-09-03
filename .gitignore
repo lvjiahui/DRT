@@ -4,6 +4,5 @@ data
 result
 # demo
 *.ipynb
-*.png
 *.ply
 *.pdf
