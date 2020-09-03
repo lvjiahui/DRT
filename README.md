@@ -12,13 +12,16 @@ Requirements:
 - Python with pytorch, numpy, trimesh, opencv-python, h5py, tqdm and imageio.
 
 ## Captured data
-Our example data is captured by graypoint camera or cellphone Redmi and released [here]().
+Our example data is captured by graypoint camera or cellphone Redmi and released [here]()
+
+Scaned mesh(GT) and visual hull already contained in *./data/*
 
 <img src="./doc/setup.jpg" width="500">
 
 ## Usage
 - Download our captured data, Optix-SDK and meshlabserver.
 - Set corresponding paths in `config.py`.
-- run `python optim.py`
+- Run `python optim.py`
+- Reconstructed mesh will be saved in *./result/* by default.
 
 ### (To be updated)
