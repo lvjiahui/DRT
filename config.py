@@ -4,7 +4,7 @@ optix_include = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/
 optix_ld = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/lib64"
 
 # cmd to call meshlabserver
-meshlabserver_cmd = "ssh jiahui@172.31.224.138 DISPLAY=:1 DR/MeshLabServer2020.04-linux.AppImage"
+meshlabserver_cmd = "DISPLAY=:1 DR/MeshLabServer2020.04-linux.AppImage"
 # exchange temporary mesh file with meshlabserver
 tmp_path = "/dev/shm/DR/"
 
@@ -15,7 +15,7 @@ result_path = "./result/"
 HyperParams = {
     # available model:
     # hand, mouse, monkey, horse, dog, rabbit, tiger, pig
-    'name' :  'hand',
+    'name' :  'pig',
     'IOR' : 1.4723,
     'Pass' : 20, # num of optimization stages
     'Iters' : 200, # in each stage
@@ -32,5 +32,6 @@ HyperParams = {
     "lr_decay": 0.5,
     "start_len": 10, # remesh target length
     "end_len": 1, # remesh target length
+    # "end_len": 0.5, 
     'num_view': 72, # used for refraction loss
                 }

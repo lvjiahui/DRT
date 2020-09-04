@@ -11,11 +11,6 @@ device='cuda'
 
 def process_mask(M):
 
-    # imageio.imsave("origin_mask.png", M)
-    # kernel = np.ones((5,5),np.uint8)
-    # M = cv2.dilate(M,kernel,iterations = 1)
-    # imageio.imsave("dialate_mask.png", M)
-
     if M.max() == 255: M //= 255
     assert M.max() == 1
     dist= (cv2.distanceTransform(M, cv2.DIST_L2, 0)-0).clip(0,1)\
@@ -64,27 +59,14 @@ class Data:
         return screen_pixel, valid, mask, origin, ray_dir, camera_M
 
     def ray_view_generator(self):
-        # head_view = {
-        #     # 'mouse': 16,
-        #     'rabbit': 18,
-        #     'hand': 18,
-        #     'dog': 17,
-        #     'monkey': 19,
-        # }
-        # if name in head_view.keys():
-        #     view_range = HyperParams['view_range']
-        #     head_num = head_view[name]
-        #     index = list(np.arange(head_num-18-view_range, head_num+1-18+view_range))
-        #     index = index + list(np.arange(head_num+18-view_range, head_num+1+18+view_range))  
-        # else:
-        #     index = list(np.arange(num))
 
 
         index = list(np.arange(0, 72, 72//self.num_view))
+
         # mouse debug
-        # if self.name == 'mouse':
-        #     index = list(np.arange(-5, 10))
-        #     index = index + list(np.arange(22,40))
+        if self.name == 'mouse':
+            index = list(np.arange(-5, 10))
+            index = index + list(np.arange(22,40))
 
         print('num_view ray', len(index))
 
@@ -94,17 +76,15 @@ class Data:
 
     def silh_view_generator(self):
         index = list(np.arange(72))
-
-        # index = list(np.arange(0,72, 72//self.num_view))
         print('num_view silh', len(index))
         while True:
             np.random.shuffle(index)
             for i in index: yield i % 72
 
 
-class Data_Graypoint(Data):
+class Data_Pointgray(Data):
     '''
-    data captured by graypoint camera
+    data captured by camera pointgray
     '''
     def __init__(self, HyperParams):
         self.resy=960
@@ -114,21 +94,18 @@ class Data_Graypoint(Data):
         h5data = h5py.File(f'{config.data_path}{self.name}.h5','r')
 
         self.Views = []
+        print('loading data..............')
         for i in trange(72):
-            # out_dir = h5data['ray'][i,:,-3:]
-            # out_origin = h5data['ray'][i,:,-6:-3]
-            # out_origin = h5data['cleaned_position'][i,:]
-            K = h5data['cam_k'][:]
             R = h5data['cam_proj'][i]
+            K = h5data['cam_k'][:]
             R_inverse = np.linalg.inv(R)
             K_inverse = np.linalg.inv(K)
-
-            screen_pixel = h5data['cleaned_position'][i,:]
+            screen_pixel = h5data['screen_position'][i]
             target = screen_pixel
-            mask = h5data['mask'][i][:,:,0]
-            ray_origin = h5data['ray'][i,:,:3]
-            ray_dir = h5data['ray'][i,:,3:6]
+            mask = h5data['mask'][i]
             valid = screen_pixel[:,0] != 0
+            ray_origin = h5data['ray_origin'][i]
+            ray_dir = h5data['ray_dir'][i]
 
             mask = process_mask(mask)
 
@@ -144,7 +121,7 @@ class Data_Graypoint(Data):
 
             camera_M = (R, K, R_inverse, K_inverse)
             self.Views.append((target, valid, mask, ray_origin, ray_dir, camera_M))
-
+        h5data.close()
 
 class Data_Redmi(Data):
     '''
@@ -159,13 +136,13 @@ class Data_Redmi(Data):
         h5data = h5py.File(f'{config.data_path}{self.name}.h5','r')
         self.Views = []
 
+        print('loading data..............')
         for i in trange(72):
             R = h5data['cam_proj'][i]
             K = h5data['cam_k'][:]
             R_inverse = np.linalg.inv(R)
             K_inverse = np.linalg.inv(K)
-
-            screen_pixel = h5data['cleaned_position'][i,:].reshape([-1,3])
+            screen_pixel = h5data['screen_position'][i].reshape([-1,3])
             target = screen_pixel
             mask = h5data['mask'][i]
             valid = screen_pixel[:,0] != 0
@@ -185,5 +162,6 @@ class Data_Redmi(Data):
 
             camera_M = (R, K, R_inverse, K_inverse)
             self.Views.append((target, valid, mask, ray_origin, ray_dir, camera_M))
+        h5data.close()
 
 
