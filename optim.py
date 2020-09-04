@@ -222,4 +222,5 @@ if __name__ == "__main__":
 
     HyperParams = config.HyperParams
     scene = optimize(HyperParams)
+    os.makedirs(config.result_path, exist_ok=True)
     _ = scene.mesh.export(f"{config.result_path}{HyperParams['name']}_recons.ply")

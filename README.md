@@ -1,5 +1,5 @@
 # DRT
-Implementation of [Differentiable Refraction-Tracing for Mesh Reconstruction of Transparent Objects.](https://vcc.tech/research.html)(TODO : update link)
+Implementation of [Differentiable Refraction-Tracing for Mesh Reconstruction of Transparent Objects.](https://vcc.tech/research/2020/DRT)
 
 ![overview](./doc/lod.png)
 
@@ -23,5 +23,19 @@ Scaned mesh(GT) and visual hull already contained in *./data/*
 - Set corresponding paths in `config.py`.
 - Run `python optim.py`
 - Reconstructed mesh will be saved in *./result/* by default.
+
+## Citation
+Please cite the paper in your publications if it helps your research:
+```
+@article{DRT,
+title = {Differentiable Refraction-Tracing for Mesh Reconstruction of Transparent Objects},
+author = {Jiahui Lyu and Bojian Wu and Dani Lischinski and Daniel Cohen-Or and Hui Huang},
+journal = {ACM Transactions on Graphics (Proceedings of SIGGRAPH ASIA 2020)},
+volume = {39},
+number = {6},
+pages = {},
+year = {2020},
+}
+```
 
 ### (To be updated)
