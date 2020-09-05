@@ -1,7 +1,7 @@
 # DRT
 Implementation of [Differentiable Refraction-Tracing for Mesh Reconstruction of Transparent Objects.](https://vcc.tech/research/2020/DRT)
 
-### [Project page](https://vcc.tech/research/2020/DRT)  |   [paper](https://vcc.tech/file/upload_file//image/research/att202009041252/DRT.pdf)  |   [video]()
+### [Project page](https://vcc.tech/research/2020/DRT)  |   [paper](https://vcc.tech/file/upload_file//image/research/att202009041252/DRT.pdf)  |   [video](https://vcc.tech/file/upload_file//image/research/att202009051343/%E7%8E%BB%E7%92%83%E9%87%8D%E5%BB%BA%E8%A7%86%E9%A2%9110.mp4)
 
 ![overview](./doc/lod.png)
 
