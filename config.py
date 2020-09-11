@@ -4,7 +4,10 @@ optix_include = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/
 optix_ld = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/lib64"
 
 # cmd to call meshlabserver
-meshlabserver_cmd = "DISPLAY=:1 DR/MeshLabServer2020.04-linux.AppImage"
+meshlabserver_cmd = "DR/MeshLabServer2020.04-linux.AppImage"
+# if you are using a headless server, you may need to prepend `DISPLAY=:0`
+# meshlabserver_cmd = "DISPLAY=:0 " + meshlabserver_cmd
+
 # choose a directory to exchange temporary mesh file with meshlabserver
 tmp_path = "/dev/shm/DR/"
 
