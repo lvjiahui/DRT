@@ -12,6 +12,7 @@ Requirements: (tested on ubuntu 16.04)
 - [NVIDIA-OptiX-SDK-6.5.0](https://developer.nvidia.com/designworks/optix/download) : Used to find the triangles intersected by each ray path.
 - [Meshlab](https://github.com/cnr-isti-vclab/meshlab/releases): We use meshlabserver to remesh and calculate average per-vertex distance (Hausdorff Distance). Note that meshlab older than 2020.04 may not support explicit remesh operation.(Tested on MeshLabServer2020.04-linux.AppImage)
 - Python with pytorch, numpy, trimesh, opencv-python, h5py, tqdm and imageio.
+- Ninja build system (needed by pytorch's cpp_extension). Run `apt install ninja-build` if you use ubuntu.
 
 ## Captured data
 Our example data is captured by camera *point grey* or cellphone *Redmi* and released [here](https://vcc.tech/research/2020/DRT)
@@ -22,7 +23,7 @@ Scanned mesh(GT) and visual hull already contained in *./data/*
 
 ## Usage
 - Download Optix-SDK, meshlabserver and our captured data.
-- Set corresponding paths in `config.py`.
+- Set corresponding paths in `config.py`. Note that you should use *absolute* path to Optix.
 - Run `python optim.py`
 - Reconstructed mesh will be saved in *./result/* by default.
 

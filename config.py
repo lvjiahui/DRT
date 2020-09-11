@@ -1,11 +1,11 @@
 
-# path to your optix libary
+# ABSOLUTE path to your optix libary
 optix_include = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/include"
 optix_ld = "/root/workspace/docker/build/DR/NVIDIA-OptiX-SDK-6.5.0-linux64/lib64"
 
 # cmd to call meshlabserver
 meshlabserver_cmd = "DISPLAY=:1 DR/MeshLabServer2020.04-linux.AppImage"
-# exchange temporary mesh file with meshlabserver
+# choose a directory to exchange temporary mesh file with meshlabserver
 tmp_path = "/dev/shm/DR/"
 
 # path to hdf5 file and visual hull mesh
