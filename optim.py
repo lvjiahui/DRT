@@ -130,11 +130,11 @@ class Loss_calculator:
         return LOSS, f'ray={ray_loss:g} vh={vh_loss:g} sm={sm_loss:g}'
 
 def get_data(HyperParams):
-    Redmi_cam = ['tiger','pig','horse','rabbit_new']
-    graypoint_cam = ['hand', 'mouse', 'dog', 'monkey']
+    Redmi_cam = ['tiger','pig','horse','rabbit']
+    Pointgray_cam = ['hand', 'mouse', 'dog', 'monkey']
     name = HyperParams['name']
 
-    if name in graypoint_cam:
+    if name in Pointgray_cam:
         data = captured_data.Data_Pointgray(HyperParams)
     elif name in Redmi_cam:
         data = captured_data.Data_Redmi(HyperParams)
