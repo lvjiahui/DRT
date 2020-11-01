@@ -36,7 +36,7 @@ author = {Jiahui Lyu and Bojian Wu and Dani Lischinski and Daniel Cohen-Or and H
 journal = {ACM Transactions on Graphics (Proceedings of SIGGRAPH ASIA 2020)},
 volume = {39},
 number = {6},
-pages = {},
+pages = {195:1--195:13},
 year = {2020},
 }
 ```
